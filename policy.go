@@ -60,6 +60,24 @@ type CustomProfileConfig struct {
 	AllowUnknown      *bool    `yaml:"allow_unknown" json:"allow_unknown"`
 }
 
+// APASection is the apa: block in policies.yaml (RFC-002).
+// Full runtime config lives in policygen/agent.APAConfig; this struct only
+// handles YAML round-tripping so the section is preserved when the main
+// package loads or saves policies.yaml.
+type APASection struct {
+	Enabled              bool   `yaml:"enabled" json:"enabled"`
+	Provider             string `yaml:"provider" json:"provider"`
+	Model                string `yaml:"model" json:"model"`
+	Schedule             string `yaml:"schedule" json:"schedule"`
+	Window               string `yaml:"window" json:"window"`
+	PolicyRepo           string `yaml:"policy_repo" json:"policy_repo"`
+	BaseBranch           string `yaml:"base_branch" json:"base_branch"`
+	NotifySlackWebhook   string `yaml:"notify_slack_webhook" json:"notify_slack_webhook"`
+	MaxTokensPerRun      int    `yaml:"max_tokens_per_run" json:"max_tokens_per_run"`
+	PerAgentMaxDiffLines int    `yaml:"per_agent_max_diff_lines" json:"per_agent_max_diff_lines"`
+	SchemaCacheTTL       string `yaml:"schema_cache_ttl" json:"schema_cache_ttl"`
+}
+
 // PolicyConfig is the top-level policies.yaml structure
 type PolicyConfig struct {
 	DefaultPolicy    string                         `yaml:"default_policy" json:"default_policy"`
@@ -67,6 +85,7 @@ type PolicyConfig struct {
 	Profiles         map[string]CustomProfileConfig `yaml:"profiles" json:"profiles"`
 	Agents           map[string]AgentPolicy         `yaml:"agents" json:"agents"`
 	Unidentified     UnidentifiedPolicy             `yaml:"unidentified" json:"unidentified"`
+	APA              APASection                     `yaml:"apa" json:"apa"`
 }
 
 // FingerprintRule is one entry in an agent's AllowedFingerprints or PendingReview list.

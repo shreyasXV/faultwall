@@ -54,6 +54,12 @@ func main() {
 		case "help", "-h", "--help":
 			printRootHelp()
 			return
+		case "apa":
+			if err := runAPA(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 

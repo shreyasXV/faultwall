@@ -1,0 +1,24 @@
+{
+  "schema": "faultwall.apa.proposal.v1",
+  "agent_id": "analytics",
+  "window_start": "2026-05-17T06:00:00Z",
+  "window_end": "2026-05-17T07:00:00Z",
+  "summary": "Agent analytics issued 12 SELECT fingerprints and 1 suspicious DELETE on audit_logs within the window. The SELECT patterns are safe pagination variants on the events table. The DELETE is anomalous — this agent has no prior DELETE history and audit_logs is a write-once table.",
+  "clusters": [
+    {
+      "label": "Pagination scans on events table",
+      "fingerprints": ["24f35f2f77106ac1", "a91cc81f7ca72eb7"],
+      "recommendation": "approve_all_safe",
+      "reasoning": "Both fingerprints are LIMIT/OFFSET variants of the same SELECT on events. Non-sensitive table, no blocked functions, count >= 50, p95 latency well under threshold."
+    },
+    {
+      "label": "Suspicious DELETE on audit_logs",
+      "fingerprints": ["3da518b244603def"],
+      "recommendation": "deny",
+      "reasoning": "DELETE on a write-once audit table. Inconsistent with this agent's 30-day pattern. Zero prior DELETEs observed. Recommend explicit blocked_operations: [DELETE] rule."
+    }
+  ],
+  "proposed_policy_yaml_patch": "agents:\n  analytics:\n    blocked_operations:\n      - DELETE\n    allowed_fingerprints:\n      - hash: \"24f35f2f77106ac1\"\n        sql: \"SELECT id, event_type FROM events LIMIT $1 OFFSET $2\"\n        seen: 312\n        verdict: safe\n      - hash: \"a91cc81f7ca72eb7\"\n        sql: \"SELECT count(*) FROM events WHERE tenant_id = $1\"\n        seen: 287\n        verdict: safe\n",
+  "confidence": 0.87,
+  "requires_human_review": true
+}

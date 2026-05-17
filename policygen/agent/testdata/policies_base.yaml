@@ -1,0 +1,27 @@
+default_policy: standard
+
+agents:
+  analytics:
+    description: Analytics pipeline agent
+    profile: standard
+    missions:
+      read:
+        tables:
+          - events
+          - tenants
+    pending_review:
+      - hash: "24f35f2f77106ac1"
+        sql: "SELECT id, event_type FROM events LIMIT $1 OFFSET $2"
+        seen: 312
+        verdict: unknown
+        reason: "insufficient observations (need >= 50)"
+      - hash: "a91cc81f7ca72eb7"
+        sql: "SELECT count(*) FROM events WHERE tenant_id = $1"
+        seen: 287
+        verdict: unknown
+        reason: "insufficient observations (need >= 50)"
+      - hash: "3da518b244603def"
+        sql: "DELETE FROM audit_logs WHERE created_at < $1"
+        seen: 3
+        verdict: risky
+        reason: "operation DELETE requires human review"
