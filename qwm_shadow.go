@@ -38,12 +38,15 @@ type shadowQWMScorer struct {
 }
 
 // NewShadowQWMScorer returns a scorer initialised with conservative cold-start weights.
+// Weights are tuned so that destructive ops (DROP/TRUNCATE/DELETE/ALTER) and
+// PII-touching reads cross the default 0.7 flag threshold even before training,
+// while benign SELECT traffic stays comfortably below it.
 func NewShadowQWMScorer() *shadowQWMScorer {
 	return &shadowQWMScorer{
 		weights: [12]float64{
 			1.8,  // is_novel_fingerprint
-			0.9,  // op_type
-			1.4,  // touches_sensitive_table
+			1.6,  // op_type — raised so DROP/TRUNCATE/DELETE alone clears the flag threshold
+			1.6,  // touches_sensitive_table — now also fires on PII column references
 			0.5,  // n_joins
 			0.6,  // has_subquery
 			0.4,  // active_connections_norm
@@ -80,8 +83,12 @@ func (s *shadowQWMScorer) extract(pq *ParsedQuery, infra QWMInfraState) [12]floa
 	}
 	// 1: op_type normalised
 	fv[1] = qwmOpType(pq.Operation) / 3.0
-	// 2: touches_sensitive_table
-	if qwmSensitiveTables(pq.Tables) {
+	// 2: touches_sensitive_table OR sensitive column reference.
+	// Uses sensitiveQWMNames (a narrow secret-grade list: password, secret,
+	// token, api_key, ssn) rather than the broader pq.HasPII (which includes
+	// email/phone/address). Routine PII lookups by support agents shouldn't
+	// solo-flag; only secret-grade column refs should.
+	if qwmSensitiveTables(pq.Tables) || qwmSensitiveColumns(pq.Columns) {
 		fv[2] = 1
 	}
 	// 3: n_joins (not tracked in ParsedQuery yet — placeholder 0)
@@ -172,6 +179,22 @@ func qwmSensitiveTables(tables []string) bool {
 		tblL := strings.ToLower(tbl)
 		for _, pat := range sensitiveQWMNames {
 			if strings.Contains(tblL, pat) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// qwmSensitiveColumns mirrors qwmSensitiveTables for column references. Catches
+// SELECT password_hash FROM users — where the table name is benign but the
+// column reference itself signals secret access. Belt-and-braces with pq.HasPII
+// (set by the parser via piiColumnNames) so both signals contribute.
+func qwmSensitiveColumns(columns []string) bool {
+	for _, col := range columns {
+		colL := strings.ToLower(col)
+		for _, pat := range sensitiveQWMNames {
+			if strings.Contains(colL, pat) {
 				return true
 			}
 		}
