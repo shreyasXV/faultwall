@@ -496,6 +496,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				logMonitored(agentLabel, query, violation)
 			} else {
 				logAllowed(agentLabel, query)
+				scoreQueryShadow(agentLabel, query)
 			}
 			recordObservation(agentLabel, identity, query, false)
 		}
@@ -539,6 +540,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					logMonitored(agentLabel, query, violation)
 				} else {
 					logAllowed(agentLabel, query)
+					scoreQueryShadow(agentLabel, query)
 				}
 				recordObservation(agentLabel, identity, query, false)
 			}
@@ -855,6 +857,21 @@ func logMonitored(agent, query string, v *PolicyViolation) {
 	}
 	log.Printf("%s%s[MONITOR]%s agent=%-20s reason=%-25s query=%s",
 		colorYellow, colorBold, colorReset, agent, detail, querySnippet(query))
+}
+
+// scoreQueryShadow runs the QWM scorer in shadow mode (observe-only, never blocks).
+// A high score is logged for operator review; the query is always forwarded.
+func scoreQueryShadow(agentLabel, query string) {
+	if qwmScorer == nil {
+		return
+	}
+	pq := ParseQuery(query)
+	infra := QWMInfraState{} // TODO: populate from collector once integrated
+	score := qwmScorer.Score(pq, infra)
+	if score > qwmFlagThreshold {
+		top := qwmScorer.TopFeatures(pq, infra, 3)
+		logQWMFlag(agentLabel, query, score, top)
+	}
 }
 
 // recordObservation writes a query event to the global ObservationStore when

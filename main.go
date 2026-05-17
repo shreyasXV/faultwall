@@ -27,7 +27,9 @@ var (
 	predictor        *Predictor
 	agentTracker     *AgentTracker
 	policyEngine     *PolicyEngine
-	observationStore *ObservationStore
+	observationStore   *ObservationStore
+	qwmScorer          QWMScorer
+	qwmFlagThreshold   = 0.7 // shadow mode: flag but never block
 )
 
 func main() {
@@ -121,6 +123,7 @@ func main() {
 		policyEngine = NewPolicyEngine()
 		agentTracker = NewAgentTracker()
 		observationStore = NewObservationStore(os.Getenv("OBSERVATION_PATH"))
+		qwmScorer = NewShadowQWMScorer()
 		go func() {
 			ticker := time.NewTicker(60 * time.Second)
 			defer ticker.Stop()
