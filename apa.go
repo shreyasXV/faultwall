@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -12,20 +13,63 @@ import (
 
 // runAPA dispatches the `faultwall apa` subcommand.
 //
-//	faultwall apa run --once   — execute one APA cycle and exit
-//	faultwall apa serve        — run APA on a cron schedule (default: hourly)
+//	faultwall apa run [flags]     — execute one APA cycle and exit
+//	faultwall apa serve [flags]   — run APA on a cron schedule (default: hourly)
+//
 func runAPA(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: faultwall apa <run|serve> [flags]\n\n" +
-			"  run --once   Run one APA cycle and exit\n" +
-			"  serve        Run APA on the configured cron schedule\n")
+			"  run     Run one APA cycle and exit\n" +
+			"  serve   Run APA on the configured cron schedule\n")
 	}
 
-	policyPath := os.Getenv("POLICY_FILE")
+	subcmd, rest := args[0], args[1:]
+	switch subcmd {
+	case "run":
+		return runAPADispatch(rest, true)
+	case "serve":
+		return runAPADispatch(rest, false)
+	case "-h", "--help", "help":
+		fmt.Println("usage: faultwall apa <run|serve> [flags]")
+		fmt.Println("  --policy <path>        override policy file (default: ./policies.yaml or POLICY_FILE)")
+		fmt.Println("  --observations <path>  override observations.jsonl path")
+		fmt.Println("  --provider <name>      override apa.provider (openai|anthropic|fake)")
+		return nil
+	default:
+		return fmt.Errorf("unknown apa subcommand %q (want: run|serve)", subcmd)
+	}
+}
+
+// runAPADispatch parses common flags, loads config, and either runs once or serves.
+func runAPADispatch(args []string, runOnce bool) error {
+	name := "apa run"
+	if !runOnce {
+		name = "apa serve"
+	}
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	policyFlag := fs.String("policy", "", "path to policies.yaml (defaults to POLICY_FILE env or ./policies.yaml)")
+	obsFlag := fs.String("observations", "", "path to observations.jsonl (defaults to OBSERVATION_PATH env or ~/.faultwall/observations.jsonl)")
+	providerFlag := fs.String("provider", "", "override apa.provider from policy file (openai|anthropic|fake)")
+	// --once is a legacy alias accepted for back-compat with earlier UX.
+	onceLegacy := fs.Bool("once", false, "deprecated — 'apa run' is already one-shot")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *onceLegacy && !runOnce {
+		runOnce = true // tolerate `apa serve --once` as one-shot
+	}
+
+	policyPath := *policyFlag
+	if policyPath == "" {
+		policyPath = os.Getenv("POLICY_FILE")
+	}
 	if policyPath == "" {
 		policyPath = "./policies.yaml"
 	}
-	obsPath := os.Getenv("OBSERVATION_PATH")
+	obsPath := *obsFlag
+	if obsPath == "" {
+		obsPath = os.Getenv("OBSERVATION_PATH")
+	}
 	if obsPath == "" {
 		home, _ := os.UserHomeDir()
 		obsPath = home + "/.faultwall/observations.jsonl"
@@ -40,33 +84,8 @@ func runAPA(args []string) error {
 	if err != nil {
 		return fmt.Errorf("load apa config: %w", err)
 	}
-
-	// Allow --provider and --once flags to override the YAML config.
-	var runOnce bool
-	for i, arg := range args {
-		switch arg {
-		case "--once":
-			runOnce = true
-		case "--provider":
-			if i+1 < len(args) {
-				cfg.Provider = args[i+1]
-			}
-		case "--policy":
-			if i+1 < len(args) {
-				cfg.PolicyPath = args[i+1]
-			}
-		case "--observations":
-			if i+1 < len(args) {
-				cfg.ObservationPath = args[i+1]
-			}
-		}
-	}
-
-	switch args[0] {
-	case "run":
-		runOnce = true
-	case "serve":
-		runOnce = false
+	if *providerFlag != "" {
+		cfg.Provider = *providerFlag
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

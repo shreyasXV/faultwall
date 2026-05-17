@@ -14,6 +14,11 @@ import (
 const (
 	anthropicEndpoint = "https://api.anthropic.com/v1/messages"
 	anthropicVersion  = "2023-06-01"
+
+	// defaultAnthropicModel is the messages-api model APA uses when the operator
+	// hasn't pinned one. Updated 2026-05-17. Bump when a newer claude-* model with
+	// equivalent or better structured-output reliability ships.
+	defaultAnthropicModel = "claude-opus-4-5"
 )
 
 type anthropicProvider struct {
@@ -29,7 +34,7 @@ func newAnthropicProvider(cfg APAConfig) (Provider, error) {
 	}
 	model := cfg.Model
 	if model == "" {
-		model = "claude-opus-4-7"
+		model = defaultAnthropicModel
 	}
 	return &anthropicProvider{
 		model:  model,
@@ -65,7 +70,7 @@ func (p *anthropicProvider) Reason(ctx context.Context, prompt Prompt) (Response
 	req.Header.Set("anthropic-version", anthropicVersion)
 
 	start := time.Now()
-	resp, err := p.client.Do(req)
+	resp, err := doWithRetry(p.client, req, defaultRetryConfig)
 	if err != nil {
 		return Response{}, fmt.Errorf("anthropic request: %w", err)
 	}

@@ -11,7 +11,14 @@ import (
 	"time"
 )
 
-const openAIEndpoint = "https://api.openai.com/v1/chat/completions"
+const (
+	openAIEndpoint = "https://api.openai.com/v1/chat/completions"
+
+	// defaultOpenAIModel is the chat-completions model APA uses when the operator
+	// hasn't pinned one. Updated 2026-05-17. Bump when a newer gpt-* model with
+	// equivalent or better JSON-mode reliability ships.
+	defaultOpenAIModel = "gpt-4o-2024-08-06"
+)
 
 type openAIProvider struct {
 	model  string
@@ -26,7 +33,7 @@ func newOpenAIProvider(cfg APAConfig) (Provider, error) {
 	}
 	model := cfg.Model
 	if model == "" {
-		model = "gpt-4o-2024-08-06"
+		model = defaultOpenAIModel
 	}
 	return &openAIProvider{
 		model:  model,
@@ -63,7 +70,7 @@ func (p *openAIProvider) Reason(ctx context.Context, prompt Prompt) (Response, e
 	req.Header.Set("Authorization", "Bearer "+p.apiKey)
 
 	start := time.Now()
-	resp, err := p.client.Do(req)
+	resp, err := doWithRetry(p.client, req, defaultRetryConfig)
 	if err != nil {
 		return Response{}, fmt.Errorf("openai request: %w", err)
 	}
