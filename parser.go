@@ -2,10 +2,34 @@ package main
 
 import (
 	"log"
+	"regexp"
 	"strings"
 
 	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
+
+var (
+	fingerprintParamRe    = regexp.MustCompile(`\$\d+`)
+	fingerprintStringRe   = regexp.MustCompile(`'[^']*'`)
+	fingerprintNumericRe  = regexp.MustCompile(`\b\d+(\.\d+)?\b`)
+	fingerprintWhitespace = regexp.MustCompile(`\s+`)
+)
+
+// FingerprintQuery returns a stable AST-level fingerprint (hex) for a SQL query.
+// Structurally identical queries with different literals or parameter values
+// produce the same fingerprint. Falls back to regex normalization if the AST
+// parse fails (e.g. invalid SQL or unsupported syntax).
+func FingerprintQuery(query string) string {
+	fp, err := pg_query.Fingerprint(query)
+	if err == nil && fp != "" {
+		return fp
+	}
+	// Regex fallback — keeps prior behavior on parse failure
+	result := fingerprintParamRe.ReplaceAllString(query, "$?")
+	result = fingerprintStringRe.ReplaceAllString(result, "'?'")
+	result = fingerprintNumericRe.ReplaceAllString(result, "?")
+	return fingerprintWhitespace.ReplaceAllString(strings.TrimSpace(result), " ")
+}
 
 // ParsedQuery holds AST-extracted information about a SQL query
 type ParsedQuery struct {

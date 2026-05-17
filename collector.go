@@ -38,26 +38,8 @@ type QueryStat struct {
 	Rows             int64   `json:"rows"`
 }
 
-// fingerprintQuery normalizes a SQL query by stripping literals and parameters
-// so similar queries with different values can be grouped together.
-func fingerprintQuery(query string) string {
-	// Replace $N positional params (PostgreSQL style)
-	result := paramRe.ReplaceAllString(query, "$?")
-	// Replace single-quoted string literals
-	result = stringLiteralRe.ReplaceAllString(result, "'?'")
-	// Replace numeric literals (integers and floats not already replaced)
-	result = numericLiteralRe.ReplaceAllString(result, "?")
-	// Collapse whitespace
-	result = whitespaceRe.ReplaceAllString(strings.TrimSpace(result), " ")
-	return result
-}
-
 var (
-	paramRe          = regexp.MustCompile(`\$\d+`)
-	stringLiteralRe  = regexp.MustCompile(`'[^']*'`)
-	numericLiteralRe = regexp.MustCompile(`\b\d+(\.\d+)?\b`)
-	whitespaceRe     = regexp.MustCompile(`\s+`)
-	schemaQualAllRe  = regexp.MustCompile(`(?i)(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)\.`)
+	schemaQualAllRe = regexp.MustCompile(`(?i)(?:FROM|JOIN|INTO|UPDATE)\s+([a-zA-Z_][a-zA-Z0-9_]*)\.`)
 )
 
 // Overview holds global resource stats
@@ -220,7 +202,7 @@ func (c *Collector) collectTopQueries(d *Detector) ([]QueryStat, error) {
 		if len(qs.Query) > 300 {
 			qs.Query = qs.Query[:300] + "…"
 		}
-		qs.QueryFingerprint = fingerprintQuery(qs.Query)
+		qs.QueryFingerprint = FingerprintQuery(qs.Query)
 		qs.TenantID = extractTenantFromQuery(qs.Query, d)
 		stats = append(stats, qs)
 	}
