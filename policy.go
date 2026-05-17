@@ -69,17 +69,28 @@ type PolicyConfig struct {
 	Unidentified     UnidentifiedPolicy             `yaml:"unidentified" json:"unidentified"`
 }
 
+// FingerprintRule is one entry in an agent's AllowedFingerprints or PendingReview list.
+type FingerprintRule struct {
+	Hash    string `yaml:"hash"`             // pg_query.Fingerprint() hex
+	SQL     string `yaml:"sql"`              // human-readable canonical form
+	Seen    int64  `yaml:"seen"`             // observation count from monitor window
+	Verdict string `yaml:"verdict"`          // "safe" | "risky" | "unknown"
+	Reason  string `yaml:"reason,omitempty"` // why it was classified this way
+}
+
 // AgentPolicy defines rules for a specific agent
 type AgentPolicy struct {
-	Description       string                   `yaml:"description" json:"description"`
-	AuthToken         string                   `yaml:"auth_token" json:"-"`
-	Profile           string                   `yaml:"profile" json:"profile"`
-	ProfileOverrides  *ProfileOverrides        `yaml:"profile_overrides" json:"profile_overrides"`
-	Missions          map[string]MissionPolicy `yaml:"missions" json:"missions"`
-	BlockedOperations []string                 `yaml:"blocked_operations" json:"blocked_operations"`
-	BlockedTables     []string                 `yaml:"blocked_tables" json:"blocked_tables"`
-	BlockedColumns    map[string][]string      `yaml:"blocked_columns" json:"blocked_columns"` // table -> blocked column names (lowercase). Fires when the listed table is referenced AND any listed column appears in the query.
-	AllowedFunctions  []string                 `yaml:"allowed_functions" json:"allowed_functions"`
+	Description        string                   `yaml:"description" json:"description"`
+	AuthToken          string                   `yaml:"auth_token" json:"-"`
+	Profile            string                   `yaml:"profile" json:"profile"`
+	ProfileOverrides   *ProfileOverrides        `yaml:"profile_overrides" json:"profile_overrides"`
+	Missions           map[string]MissionPolicy `yaml:"missions" json:"missions"`
+	BlockedOperations  []string                 `yaml:"blocked_operations" json:"blocked_operations"`
+	BlockedTables      []string                 `yaml:"blocked_tables" json:"blocked_tables"`
+	BlockedColumns     map[string][]string      `yaml:"blocked_columns" json:"blocked_columns"` // table -> blocked column names (lowercase). Fires when the listed table is referenced AND any listed column appears in the query.
+	AllowedFunctions   []string                 `yaml:"allowed_functions" json:"allowed_functions"`
+	AllowedFingerprints []FingerprintRule       `yaml:"allowed_fingerprints,omitempty" json:"allowed_fingerprints,omitempty"`
+	PendingReview      []FingerprintRule        `yaml:"pending_review,omitempty" json:"pending_review,omitempty"` // informational only, never enforced
 }
 
 // MissionPolicy defines per-mission table/operation access
@@ -467,7 +478,16 @@ func checkConditions(conditions []string, operation string, query string, identi
 
 // CheckQuery evaluates a query against the loaded policies.
 // Returns nil if allowed, a PolicyViolation if blocked/flagged.
+// CheckQuery parses query and evaluates it against the policy.
+// If the caller already has a *ParsedQuery (e.g. from a prior parse on the same
+// query), use CheckQueryWithParsed to avoid the extra CGO round-trip.
 func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid int) *PolicyViolation {
+	return pe.CheckQueryWithParsed(identity, ParseQuery(query), query, pid)
+}
+
+// CheckQueryWithParsed is CheckQuery with a pre-parsed *ParsedQuery.
+// parsed.Fingerprint must already be set (ParseQuery sets it automatically).
+func (pe *PolicyEngine) CheckQueryWithParsed(identity *AgentIdentity, parsed *ParsedQuery, query string, pid int) *PolicyViolation {
 	pe.mu.RLock()
 	cfg := pe.config
 	pe.mu.RUnlock()
@@ -490,8 +510,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		}
 	}
 
-	// Parse query using AST (falls back to regex automatically)
-	parsed := ParseQuery(query)
+	// parsed is provided by the caller — no ParseQuery call here
 	operation := parsed.Operation
 	operations := parsed.Operations
 	if len(operations) == 0 {
@@ -939,6 +958,18 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 					Action:    "pending",
 					Timestamp: time.Now(),
 				}
+			}
+		}
+	}
+
+	// ── Allowed-fingerprint shortcut (MUST remain the last check) ──
+	// A fingerprint match is additive-allow only: it can only pass a query that
+	// cleared every deny check above. Moving this block earlier would let a known
+	// fingerprint bypass blocked_tables, blocked_columns, blocked_functions, etc.
+	if len(agentPolicy.AllowedFingerprints) > 0 {
+		for _, rule := range agentPolicy.AllowedFingerprints {
+			if rule.Hash == parsed.Fingerprint { // parsed.Fingerprint set once by ParseQuery
+				return nil
 			}
 		}
 	}

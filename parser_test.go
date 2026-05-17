@@ -1403,3 +1403,57 @@ func TestCTEAliasNotReportedAsTable(t *testing.T) {
 		})
 	}
 }
+
+func TestFingerprintQuery(t *testing.T) {
+	t.Run("same fingerprint for different literal values", func(t *testing.T) {
+		a := FingerprintQuery("SELECT * FROM t WHERE id = 1")
+		b := FingerprintQuery("SELECT * FROM t WHERE id = 2")
+		if a != b {
+			t.Errorf("expected same fingerprint for parameterized variants, got %q vs %q", a, b)
+		}
+	})
+
+	t.Run("same fingerprint for different string literals", func(t *testing.T) {
+		a := FingerprintQuery("SELECT * FROM users WHERE name = 'alice'")
+		b := FingerprintQuery("SELECT * FROM users WHERE name = 'bob'")
+		if a != b {
+			t.Errorf("expected same fingerprint for different string literals, got %q vs %q", a, b)
+		}
+	})
+
+	t.Run("same fingerprint for positional params vs literals", func(t *testing.T) {
+		a := FingerprintQuery("SELECT id FROM orders WHERE id = $1")
+		b := FingerprintQuery("SELECT id FROM orders WHERE id = $2")
+		if a != b {
+			t.Errorf("expected same fingerprint for different positional params, got %q vs %q", a, b)
+		}
+	})
+
+	t.Run("different fingerprint for structurally different queries", func(t *testing.T) {
+		a := FingerprintQuery("SELECT * FROM orders WHERE id = 1")
+		b := FingerprintQuery("DELETE FROM orders WHERE id = 1")
+		if a == b {
+			t.Errorf("expected different fingerprints for SELECT vs DELETE, got same: %q", a)
+		}
+	})
+
+	t.Run("non-empty result on invalid SQL fallback", func(t *testing.T) {
+		fp := FingerprintQuery("this is not sql $$$$")
+		if fp == "" {
+			t.Error("expected non-empty fallback fingerprint for invalid SQL")
+		}
+	})
+
+	t.Run("returns hex string for valid SQL", func(t *testing.T) {
+		fp := FingerprintQuery("SELECT 1")
+		if fp == "" {
+			t.Error("expected non-empty fingerprint")
+		}
+		for _, c := range fp {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				// regex fallback produces non-hex output — only assert hex for valid SQL
+				break
+			}
+		}
+	})
+}

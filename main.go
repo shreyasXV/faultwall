@@ -15,18 +15,21 @@ import (
 )
 
 var (
-	db              *sql.DB
-	collector       *Collector
-	detector        *Detector
-	alertManager    *AlertManager
-	historyStore    *HistoryStore
-	slackBot        *SlackNotifier
-	throttler       *Throttler
-	costEstimator   *CostEstimator
-	anomalyDetector *AnomalyDetector
-	predictor       *Predictor
-	agentTracker    *AgentTracker
-	policyEngine    *PolicyEngine
+	db               *sql.DB
+	collector        *Collector
+	detector         *Detector
+	alertManager     *AlertManager
+	historyStore     *HistoryStore
+	slackBot         *SlackNotifier
+	throttler        *Throttler
+	costEstimator    *CostEstimator
+	anomalyDetector  *AnomalyDetector
+	predictor        *Predictor
+	agentTracker     *AgentTracker
+	policyEngine     *PolicyEngine
+	observationStore   *ObservationStore
+	qwmScorer          QWMScorer
+	qwmFlagThreshold   = 0.7 // shadow mode: flag but never block
 )
 
 func main() {
@@ -119,6 +122,17 @@ func main() {
 		os.Setenv("POLICY_ENFORCEMENT", "enforce")
 		policyEngine = NewPolicyEngine()
 		agentTracker = NewAgentTracker()
+		observationStore = NewObservationStore(os.Getenv("OBSERVATION_PATH"))
+		qwmScorer = NewShadowQWMScorer()
+		go func() {
+			ticker := time.NewTicker(60 * time.Second)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := observationStore.Flush(); err != nil {
+					log.Printf("observation flush: %v", err)
+				}
+			}
+		}()
 		log.Printf("🛡️  FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
 
 		// Start proxy in a goroutine so we can also run the API server
@@ -176,6 +190,11 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdownCtx)
+		if observationStore != nil {
+			if err := observationStore.Flush(); err != nil {
+				log.Printf("observation shutdown flush: %v", err)
+			}
+		}
 		return
 	}
 
