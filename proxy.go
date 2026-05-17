@@ -486,6 +486,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				sendBlockedResponse(client, violation, decisionLatencyMs)
 				clientWriteMu.Unlock()
 				logBlocked(agentLabel, query, violation)
+				recordObservation(agentLabel, identity, query, true)
 				continue
 			}
 
@@ -496,6 +497,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			} else {
 				logAllowed(agentLabel, query)
 			}
+			recordObservation(agentLabel, identity, query, false)
 		}
 
 		// Extended query protocol: type 'P' (Parse)
@@ -527,6 +529,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					sendExtendedBlockedResponse(client, violation, decisionLatencyMs)
 					clientWriteMu.Unlock()
 					logBlocked(agentLabel, query, violation)
+					recordObservation(agentLabel, identity, query, true)
 					continue
 				}
 
@@ -537,6 +540,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				} else {
 					logAllowed(agentLabel, query)
 				}
+				recordObservation(agentLabel, identity, query, false)
 			}
 		}
 
@@ -851,4 +855,18 @@ func logMonitored(agent, query string, v *PolicyViolation) {
 	}
 	log.Printf("%s%s[MONITOR]%s agent=%-20s reason=%-25s query=%s",
 		colorYellow, colorBold, colorReset, agent, detail, querySnippet(query))
+}
+
+// recordObservation writes a query event to the global ObservationStore when
+// one is configured (proxy mode with OBSERVATION_PATH or default path).
+func recordObservation(agentLabel string, identity *AgentIdentity, query string, blocked bool) {
+	if observationStore == nil {
+		return
+	}
+	pq := ParseQuery(query)
+	agentID := agentLabel
+	if identity != nil {
+		agentID = identity.AgentID
+	}
+	observationStore.Record(agentID, pq, query, blocked)
 }
