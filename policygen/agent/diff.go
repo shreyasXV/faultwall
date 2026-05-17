@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -56,11 +57,17 @@ func ApplyPatch(policyPath, patch string) ([]byte, error) {
 		mergeNodes(baseDoc.Content[0], overlayDoc.Content[0])
 	}
 
-	merged, err := yaml.Marshal(&baseDoc)
-	if err != nil {
+	// Use SetIndent(2) to match FaultWall's policy file convention.
+	// yaml.Marshal defaults to 4-space indent, which would rewrite every
+	// nested line and turn a 3-line semantic patch into a 100+ line diff.
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&baseDoc); err != nil {
 		return nil, fmt.Errorf("marshal merged policy: %w", err)
 	}
-	return merged, nil
+	enc.Close()
+	return buf.Bytes(), nil
 }
 
 // mergeNodes merges overlay into base, preserving base's comments and key ordering.

@@ -332,6 +332,79 @@ agents:
 	}
 }
 
+// TestApplyPatchRealisticallySmallDiff is the hostile regression for P0.1.
+// A 4-line semantic patch against a realistic 30-line multi-agent policy must
+// NOT reindent the whole agents block (pre-fix: 47-line diff; post-fix: ≤8 lines).
+func TestApplyPatchRealisticallySmallDiff(t *testing.T) {
+	base := `# FaultWall policy — production
+default_policy: standard
+
+blocked_functions:
+  - pg_read_file
+  - pg_write_file
+
+agents:
+  analytics:
+    description: Analytics pipeline
+    profile: standard
+    missions:
+      read:
+        tables:
+          - events
+          - tenants
+    pending_review:
+      - hash: "fp1"
+        sql: "SELECT 1"
+        seen: 10
+        verdict: unknown
+  billing:
+    description: Billing service
+    profile: strict
+    blocked_operations:
+      - DROP
+      - TRUNCATE
+    missions:
+      write:
+        tables:
+          - invoices
+`
+	dir := t.TempDir()
+	policyPath := filepath.Join(dir, "policies.yaml")
+	if err := os.WriteFile(policyPath, []byte(base), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 4-line semantic patch: add DELETE to analytics blocked_operations.
+	patch := "agents:\n  analytics:\n    blocked_operations:\n      - DELETE\n"
+	merged, err := ApplyPatch(policyPath, patch)
+	if err != nil {
+		t.Fatalf("ApplyPatch: %v", err)
+	}
+
+	// Comment and unrelated agent must survive.
+	got := string(merged)
+	if !strings.Contains(got, "FaultWall policy") {
+		t.Error("header comment was lost")
+	}
+	if !strings.Contains(got, "billing") {
+		t.Error("unrelated billing agent was lost")
+	}
+	if !strings.Contains(got, "DELETE") {
+		t.Error("patched DELETE value not found")
+	}
+
+	diff, err := DiffText(policyPath, merged)
+	if err != nil {
+		t.Fatalf("DiffText: %v", err)
+	}
+	n := CountDiffLines(diff)
+	// Pre-fix (yaml.Marshal 4-space reindent): ~47 changed lines.
+	// Post-fix (SetIndent(2)): only the new blocked_operations lines, ≤8.
+	if n > 8 {
+		t.Errorf("4-line semantic patch produced %d diff lines — indent rewrite still happening?\ndiff:\n%s", n, diff)
+	}
+}
+
 // TestApplyPatchNewKey verifies that a new top-level key is appended without
 // clobbering existing content.
 func TestApplyPatchNewKey(t *testing.T) {
