@@ -15,6 +15,7 @@ type PRRequest struct {
 	Body       string
 	PolicyPath string
 	NewContent []byte
+	BaseBranch string // PR target branch; defaults to "main" if empty
 }
 
 // PRResult is returned after opening (or attempting to open) a PR.
@@ -58,8 +59,11 @@ func OpenPR(req PRRequest) (PRResult, error) {
 		return PRResult{}, fmt.Errorf("git push: %w\n%s", err, out)
 	}
 
-	// Open PR via gh
-	url, err := ghCreatePR(req.Title, req.Body)
+	base := req.BaseBranch
+	if base == "" {
+		base = "main"
+	}
+	url, err := ghCreatePR(req.Title, req.Body, base)
 	if err != nil {
 		return PRResult{BranchName: req.BranchName}, fmt.Errorf("gh pr create: %w", err)
 	}
@@ -127,10 +131,11 @@ func gitRun(args ...string) (string, error) {
 	return string(out), err
 }
 
-func ghCreatePR(title, body string) (string, error) {
+func ghCreatePR(title, body, baseBranch string) (string, error) {
 	out, err := exec.Command("gh", "pr", "create",
 		"--title", title,
 		"--body", body,
+		"--base", baseBranch,
 	).Output()
 	if err != nil {
 		return "", err

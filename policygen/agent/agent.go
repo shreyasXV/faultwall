@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -49,6 +50,7 @@ func RunOnce(ctx context.Context, cfg APAConfig) ([]string, error) {
 	windowEnd := now
 
 	var prURLs []string
+	var agentErrors []string
 	anyPending := false
 
 	for agentID, ap := range agentPolicies {
@@ -65,11 +67,16 @@ func RunOnce(ctx context.Context, cfg APAConfig) ([]string, error) {
 		}
 		if runErr != nil {
 			log.Printf("[apa] agent=%s error: %v", agentID, runErr)
+			agentErrors = append(agentErrors, fmt.Sprintf("agent %s: %v", agentID, runErr))
 		}
 	}
 
 	if !anyPending {
 		log.Println("[apa] nothing to do — no agents have pending_review entries")
+	}
+	if len(agentErrors) > 0 {
+		return prURLs, fmt.Errorf("APA completed with %d error(s):\n%s",
+			len(agentErrors), strings.Join(agentErrors, "\n"))
 	}
 	return prURLs, nil
 }
@@ -101,7 +108,7 @@ func processAgent(
 	}()
 
 	// Build and send prompt.
-	prompt := BuildPrompt(agentID, ap.PendingReview, obsIndex, windowStart, windowEnd, cfg.MaxTokensPerRun)
+	prompt := BuildPrompt(agentID, ap, obsIndex, windowStart, windowEnd, cfg.MaxTokensPerRun)
 	log.Printf("[apa] calling provider for %s", SummarizePrompt(agentID, ap.PendingReview))
 
 	resp, err := provider.Reason(ctx, prompt)
@@ -167,12 +174,11 @@ func processAgent(
 		Body:       body,
 		PolicyPath: cfg.PolicyPath,
 		NewContent: merged,
+		BaseBranch: cfg.BaseBranch,
 	})
 	if err != nil {
 		rec.Error = "pr: " + err.Error()
-		log.Printf("[apa] PR open failed for agent=%s: %v", agentID, err)
-		// Non-fatal: we still log the audit record and continue with other agents.
-		return "", nil
+		return "", fmt.Errorf("open PR for agent %s: %w", agentID, err)
 	}
 
 	rec.PRURL = prResult.URL

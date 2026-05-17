@@ -71,6 +71,7 @@ type APASection struct {
 	Schedule             string `yaml:"schedule" json:"schedule"`
 	Window               string `yaml:"window" json:"window"`
 	PolicyRepo           string `yaml:"policy_repo" json:"policy_repo"`
+	BaseBranch           string `yaml:"base_branch" json:"base_branch"`
 	NotifySlackWebhook   string `yaml:"notify_slack_webhook" json:"notify_slack_webhook"`
 	MaxTokensPerRun      int    `yaml:"max_tokens_per_run" json:"max_tokens_per_run"`
 	PerAgentMaxDiffLines int    `yaml:"per_agent_max_diff_lines" json:"per_agent_max_diff_lines"`

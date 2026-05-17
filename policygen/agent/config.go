@@ -25,6 +25,7 @@ type APAConfig struct {
 	Schedule             string        // cron expression, default hourly
 	Window               time.Duration // observation look-back window
 	PolicyRepo           string        // git repo APA opens PRs against
+	BaseBranch           string        // PR target branch, default "main"
 	NotifySlackWebhook   string
 	MaxTokensPerRun      int
 	PerAgentMaxDiffLines int
@@ -42,6 +43,7 @@ type apaYAML struct {
 	Schedule             string `yaml:"schedule"`
 	Window               string `yaml:"window"`
 	PolicyRepo           string `yaml:"policy_repo"`
+	BaseBranch           string `yaml:"base_branch"`
 	NotifySlackWebhook   string `yaml:"notify_slack_webhook"`
 	MaxTokensPerRun      int    `yaml:"max_tokens_per_run"`
 	PerAgentMaxDiffLines int    `yaml:"per_agent_max_diff_lines"`
@@ -70,6 +72,7 @@ func LoadConfig(policyPath, observationPath, auditLogPath string) (APAConfig, er
 		Model:                s.Model,
 		Schedule:             s.Schedule,
 		PolicyRepo:           s.PolicyRepo,
+		BaseBranch:           s.BaseBranch,
 		NotifySlackWebhook:   s.NotifySlackWebhook,
 		MaxTokensPerRun:      s.MaxTokensPerRun,
 		PerAgentMaxDiffLines: s.PerAgentMaxDiffLines,
@@ -79,6 +82,9 @@ func LoadConfig(policyPath, observationPath, auditLogPath string) (APAConfig, er
 	}
 	if cfg.Schedule == "" {
 		cfg.Schedule = defaultSchedule
+	}
+	if cfg.BaseBranch == "" {
+		cfg.BaseBranch = "main"
 	}
 	if cfg.MaxTokensPerRun == 0 {
 		cfg.MaxTokensPerRun = defaultMaxTokens
