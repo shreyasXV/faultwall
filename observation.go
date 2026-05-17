@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 const observationSchema = "faultwall.observation.v1"
 const observationMaxBytes = 100 * 1024 * 1024 // 100 MB
+const observationMaxRecords = 10_000          // force-flush before map grows beyond this
 
 // FingerprintObservation is one record per (agentID, fingerprint) pair, written
 // to disk as JSONL and read by the policygen CLI to generate draft policies.
@@ -58,15 +60,27 @@ func NewObservationStore(path string) *ObservationStore {
 }
 
 // Record upserts an observation for the given (agentID, parsed query) pair.
+// Uses pq.Fingerprint (set once by ParseQuery) — never calls FingerprintQuery again.
+// If the in-memory map exceeds observationMaxRecords it drains inline to disk
+// before adding the new record, preventing unbounded memory growth.
 func (s *ObservationStore) Record(agentID string, pq *ParsedQuery, rawSQL string, blocked bool) {
 	if pq == nil {
 		return
 	}
-	fp := FingerprintQuery(rawSQL)
+	fp := pq.Fingerprint // P0.2: use cached value, no second CGO call
 	key := agentID + "|" + fp
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
+
+	// P1.1: force-drain if map is too large, while still holding the lock
+	var overflow []*FingerprintObservation
+	if len(s.records) >= observationMaxRecords {
+		overflow = make([]*FingerprintObservation, 0, len(s.records))
+		for _, obs := range s.records {
+			overflow = append(overflow, obs)
+		}
+		s.records = make(map[string]*FingerprintObservation)
+	}
 
 	obs, ok := s.records[key]
 	if !ok {
@@ -87,6 +101,14 @@ func (s *ObservationStore) Record(agentID string, pq *ParsedQuery, rawSQL string
 	if blocked {
 		obs.BlockedCount++
 	}
+	s.mu.Unlock()
+
+	// Write the overflow snapshot to disk outside the lock
+	if overflow != nil {
+		if err := s.writeSnapshot(overflow); err != nil {
+			log.Printf("observation force-flush: %v", err)
+		}
+	}
 }
 
 // Flush appends all in-memory records to the JSONL file, then clears the map.
@@ -105,6 +127,15 @@ func (s *ObservationStore) Flush() error {
 	s.records = make(map[string]*FingerprintObservation)
 	s.mu.Unlock()
 
+	return s.writeSnapshot(snapshot)
+}
+
+// writeSnapshot appends a slice of observations to disk, rotating first if needed.
+// Safe to call without holding the mutex.
+func (s *ObservationStore) writeSnapshot(snapshot []*FingerprintObservation) error {
+	if len(snapshot) == 0 {
+		return nil
+	}
 	if err := s.rotateIfNeeded(); err != nil {
 		return fmt.Errorf("observation rotate: %w", err)
 	}

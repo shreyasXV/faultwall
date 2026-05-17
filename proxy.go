@@ -471,7 +471,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		if msgType == 'Q' && len(payload) > 1 {
 			query := string(payload[:len(payload)-1])
 			decisionStart := time.Now()
-			violation := safeCheckQuery(pe, identity, query)
+			violation, pq := safeCheckQuery(pe, identity, query)
 			decisionLatencyMs := float64(time.Since(decisionStart).Microseconds()) / 1000.0
 
 			// Track this query in the agent tracker
@@ -486,7 +486,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				sendBlockedResponse(client, violation, decisionLatencyMs)
 				clientWriteMu.Unlock()
 				logBlocked(agentLabel, query, violation)
-				recordObservation(agentLabel, identity, query, true)
+				recordObservation(agentLabel, identity, query, pq, true)
 				continue
 			}
 
@@ -496,9 +496,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				logMonitored(agentLabel, query, violation)
 			} else {
 				logAllowed(agentLabel, query)
-				scoreQueryShadow(agentLabel, query)
+				scoreQueryShadow(agentLabel, query, pq)
 			}
-			recordObservation(agentLabel, identity, query, false)
+			recordObservation(agentLabel, identity, query, pq, false)
 		}
 
 		// Extended query protocol: type 'P' (Parse)
@@ -508,7 +508,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 			if query != "" {
 				decisionStart := time.Now()
-				violation := safeCheckQuery(pe, identity, query)
+				violation, pq := safeCheckQuery(pe, identity, query)
 				decisionLatencyMs := float64(time.Since(decisionStart).Microseconds()) / 1000.0
 
 				// Track this query in the agent tracker
@@ -530,7 +530,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					sendExtendedBlockedResponse(client, violation, decisionLatencyMs)
 					clientWriteMu.Unlock()
 					logBlocked(agentLabel, query, violation)
-					recordObservation(agentLabel, identity, query, true)
+					recordObservation(agentLabel, identity, query, pq, true)
 					continue
 				}
 
@@ -540,9 +540,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					logMonitored(agentLabel, query, violation)
 				} else {
 					logAllowed(agentLabel, query)
-					scoreQueryShadow(agentLabel, query)
+					scoreQueryShadow(agentLabel, query, pq)
 				}
-				recordObservation(agentLabel, identity, query, false)
+				recordObservation(agentLabel, identity, query, pq, false)
 			}
 		}
 
@@ -784,15 +784,19 @@ func sendStartupError(client net.Conn, msg string) {
 	client.Write(buf)
 }
 
-// safeCheckQuery calls pe.CheckQuery with panic recovery (fail-open).
-func safeCheckQuery(pe *PolicyEngine, identity *AgentIdentity, query string) (v *PolicyViolation) {
+// safeCheckQuery parses query once, then evaluates it against the policy with
+// panic recovery (fail-open). Returns both the violation and the *ParsedQuery
+// so callers can reuse the parsed result without a second CGO round-trip.
+func safeCheckQuery(pe *PolicyEngine, identity *AgentIdentity, query string) (violation *PolicyViolation, parsed *ParsedQuery) {
+	parsed = ParseQuery(query)
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("%s[FAIL-OPEN]%s panic in policy check: %v — allowing query", colorYellow, colorReset, r)
-			v = nil
+			violation = nil
 		}
 	}()
-	return pe.CheckQuery(identity, query, 0)
+	violation = pe.CheckQueryWithParsed(identity, parsed, query, 0)
+	return
 }
 
 // sendBlockedResponse sends an ErrorResponse + ReadyForQuery to the client.
@@ -860,12 +864,11 @@ func logMonitored(agent, query string, v *PolicyViolation) {
 }
 
 // scoreQueryShadow runs the QWM scorer in shadow mode (observe-only, never blocks).
-// A high score is logged for operator review; the query is always forwarded.
-func scoreQueryShadow(agentLabel, query string) {
-	if qwmScorer == nil {
+// pq is the already-parsed query from safeCheckQuery — no second CGO call.
+func scoreQueryShadow(agentLabel, query string, pq *ParsedQuery) {
+	if qwmScorer == nil || pq == nil {
 		return
 	}
-	pq := ParseQuery(query)
 	infra := QWMInfraState{} // TODO: populate from collector once integrated
 	score := qwmScorer.Score(pq, infra)
 	if score > qwmFlagThreshold {
@@ -874,16 +877,18 @@ func scoreQueryShadow(agentLabel, query string) {
 	}
 }
 
-// recordObservation writes a query event to the global ObservationStore when
-// one is configured (proxy mode with OBSERVATION_PATH or default path).
-func recordObservation(agentLabel string, identity *AgentIdentity, query string, blocked bool) {
-	if observationStore == nil {
+// recordObservation writes a query event to the global ObservationStore.
+// pq is the already-parsed query from safeCheckQuery — no second CGO call.
+// Unidentified connections (identity == nil) are tagged _unidentified.
+func recordObservation(agentLabel string, identity *AgentIdentity, query string, pq *ParsedQuery, blocked bool) {
+	if observationStore == nil || pq == nil {
 		return
 	}
-	pq := ParseQuery(query)
-	agentID := agentLabel
-	if identity != nil {
+	agentID := "_unidentified"
+	if identity != nil && identity.AgentID != "" {
 		agentID = identity.AgentID
+	} else if identity == nil && agentLabel != "unknown" {
+		agentID = agentLabel
 	}
 	observationStore.Record(agentID, pq, query, blocked)
 }

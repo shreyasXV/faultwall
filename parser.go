@@ -42,9 +42,10 @@ type ParsedQuery struct {
 	ServerInfoFuncs []string // current_user, session_user, current_catalog, etc.
 	SystemColumns   []string // ctid, xmin, xmax, cmin, cmax, tableoid
 	CTENames        []string // CTE alias names (WITH x AS ...) — not real tables
-	HasRegprocCast      bool // true if query contains ::regproc/::regprocedure cast
-	HasPgCatalogOp      bool // true if query uses OPERATOR(pg_catalog.*) syntax
-	HasPII              bool // true if query touches PII-sensitive columns
+	Fingerprint         string // pg_query.Fingerprint() hex, set once by ParseQuery — use this, never call FingerprintQuery on the same query again
+	HasRegprocCast      bool   // true if query contains ::regproc/::regprocedure cast
+	HasPgCatalogOp      bool   // true if query uses OPERATOR(pg_catalog.*) syntax
+	HasPII              bool   // true if query touches PII-sensitive columns
 	UsedAST             bool
 }
 
@@ -100,14 +101,15 @@ func ParseQuery(query string) *ParsedQuery {
 	if err != nil {
 		log.Printf("[REGEX-FALLBACK] AST parse failed for query: %v", err)
 		return &ParsedQuery{
-			Operation: ExtractSQLOperationRegex(query),
-			Tables:    ExtractTablesRegex(query),
-			Functions: nil,
-			UsedAST:   false,
+			Operation:   ExtractSQLOperationRegex(query),
+			Tables:      ExtractTablesRegex(query),
+			Functions:   nil,
+			UsedAST:     false,
+			Fingerprint: FingerprintQuery(query),
 		}
 	}
 
-	pq := &ParsedQuery{UsedAST: true}
+	pq := &ParsedQuery{UsedAST: true, Fingerprint: FingerprintQuery(query)}
 
 	if len(tree.Stmts) == 0 {
 		return pq

@@ -478,7 +478,16 @@ func checkConditions(conditions []string, operation string, query string, identi
 
 // CheckQuery evaluates a query against the loaded policies.
 // Returns nil if allowed, a PolicyViolation if blocked/flagged.
+// CheckQuery parses query and evaluates it against the policy.
+// If the caller already has a *ParsedQuery (e.g. from a prior parse on the same
+// query), use CheckQueryWithParsed to avoid the extra CGO round-trip.
 func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid int) *PolicyViolation {
+	return pe.CheckQueryWithParsed(identity, ParseQuery(query), query, pid)
+}
+
+// CheckQueryWithParsed is CheckQuery with a pre-parsed *ParsedQuery.
+// parsed.Fingerprint must already be set (ParseQuery sets it automatically).
+func (pe *PolicyEngine) CheckQueryWithParsed(identity *AgentIdentity, parsed *ParsedQuery, query string, pid int) *PolicyViolation {
 	pe.mu.RLock()
 	cfg := pe.config
 	pe.mu.RUnlock()
@@ -501,8 +510,7 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 		}
 	}
 
-	// Parse query using AST (falls back to regex automatically)
-	parsed := ParseQuery(query)
+	// parsed is provided by the caller — no ParseQuery call here
 	operation := parsed.Operation
 	operations := parsed.Operations
 	if len(operations) == 0 {
@@ -959,9 +967,8 @@ func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid in
 	// cleared every deny check above. Moving this block earlier would let a known
 	// fingerprint bypass blocked_tables, blocked_columns, blocked_functions, etc.
 	if len(agentPolicy.AllowedFingerprints) > 0 {
-		fp := FingerprintQuery(query)
 		for _, rule := range agentPolicy.AllowedFingerprints {
-			if rule.Hash == fp {
+			if rule.Hash == parsed.Fingerprint { // parsed.Fingerprint set once by ParseQuery
 				return nil
 			}
 		}

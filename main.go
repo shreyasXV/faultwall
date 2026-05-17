@@ -190,6 +190,11 @@ func main() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		srv.Shutdown(shutdownCtx)
+		if observationStore != nil {
+			if err := observationStore.Flush(); err != nil {
+				log.Printf("observation shutdown flush: %v", err)
+			}
+		}
 		return
 	}
 
