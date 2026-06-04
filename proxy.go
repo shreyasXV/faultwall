@@ -487,6 +487,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				clientWriteMu.Unlock()
 				logBlocked(agentLabel, query, violation)
 				recordObservation(agentLabel, identity, query, pq, true)
+				emitTelemetryFor("blocked", "block", violation, pq, decisionLatencyMs)
 				continue
 			}
 
@@ -494,9 +495,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				violation.Action = "monitored"
 				pe.addViolation(*violation)
 				logMonitored(agentLabel, query, violation)
+				emitTelemetryFor("monitored", "flag", violation, pq, decisionLatencyMs)
 			} else {
 				logAllowed(agentLabel, query)
 				scoreQueryShadow(agentLabel, query, pq)
+				emitTelemetryFor("allowed", "allow", nil, pq, decisionLatencyMs)
 			}
 			recordObservation(agentLabel, identity, query, pq, false)
 		}
@@ -531,6 +534,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					clientWriteMu.Unlock()
 					logBlocked(agentLabel, query, violation)
 					recordObservation(agentLabel, identity, query, pq, true)
+					emitTelemetryFor("blocked", "block", violation, pq, decisionLatencyMs)
 					continue
 				}
 
@@ -538,9 +542,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					violation.Action = "monitored"
 					pe.addViolation(*violation)
 					logMonitored(agentLabel, query, violation)
+					emitTelemetryFor("monitored", "flag", violation, pq, decisionLatencyMs)
 				} else {
 					logAllowed(agentLabel, query)
 					scoreQueryShadow(agentLabel, query, pq)
+					emitTelemetryFor("allowed", "allow", nil, pq, decisionLatencyMs)
 				}
 				recordObservation(agentLabel, identity, query, pq, false)
 			}
