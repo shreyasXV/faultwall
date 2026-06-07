@@ -30,6 +30,12 @@ import (
 	"time"
 )
 
+// qwmTelemetrySLOMs is the p99 SLO threshold (ms) reported alongside the
+// lightweight QWM risk score on telemetry events. This is an OSS-side default
+// for the open-core proxy; the trained cost-prediction model and its calibrated
+// SLO decisioning live in the closed faultwall-ebpf repo, not here.
+const qwmTelemetrySLOMs = 500
+
 // TelemetryEvent is the metadata-only shape pushed to the control plane.
 // NOTE: there is intentionally NO field carrying query text or row data.
 type TelemetryEvent struct {
@@ -351,7 +357,7 @@ func emitTelemetryFor(eventType, decision string, v *PolicyViolation, pq *Parsed
 	costFlag := decision == "flag"
 
 	var riskScore float64
-	qwmThresholdMs := costSLOMs
+	qwmThresholdMs := qwmTelemetrySLOMs
 	if qwmScorer != nil && pq != nil {
 		// Cheap logistic-regression scorer (no CGO / featurize). Output only.
 		riskScore = qwmScorer.Score(pq, QWMInfraState{})
