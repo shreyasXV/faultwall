@@ -4,9 +4,11 @@ package main
 //
 // PRIVACY CONTRACT (non-negotiable): this client sends METADATA ONLY to the
 // control plane — event_type, decision, table_name, op_type, latency_ms,
-// cost_flag. It NEVER sends query text, bound parameter values, row data, or
-// policy bodies. The TelemetryEvent struct deliberately has no query/sql/body
-// field; telemetry_client_test.go asserts this via JSON marshaling.
+// cost_flag, and QWM risk scores (risk_score, p99_breach_prob,
+// qwm_threshold_ms). It NEVER sends query text, bound parameter values, row
+// data, or policy bodies. The TelemetryEvent struct deliberately has no
+// query/sql/body field; telemetry_client_test.go asserts this via JSON
+// marshaling.
 //
 // PERFORMANCE CONTRACT: emitting telemetry must NOT add latency to the query
 // hot path (the sub-3ms promise). Emit() is a non-blocking send onto a buffered
@@ -37,6 +39,11 @@ type TelemetryEvent struct {
 	OpType    string  `json:"op_type"` // SELECT | INSERT | UPDATE | DELETE | ...
 	LatencyMs float64 `json:"latency_ms"`
 	CostFlag  bool    `json:"cost_flag"`
+	// QWM risk signals — METADATA ONLY (scores derived from the Query Workload
+	// Model, never the query text itself). Zero values mean "not scored".
+	RiskScore      float64 `json:"risk_score"`       // P(bad) for this query, 0..1
+	P99BreachProb  float64 `json:"p99_breach_prob"`  // P(p99 latency breach), 0..1
+	QWMThresholdMs int     `json:"qwm_threshold_ms"` // configured QWM p99 threshold (ms)
 }
 
 // ControlPlaneConfig is parsed from ~/.faultwall/config.toml ([control_plane]).
@@ -317,6 +324,13 @@ func (tc *TelemetryClient) StartHeartbeat(every time.Duration) {
 // query) into a metadata-only telemetry event and fires it. table/op are
 // derived from the parsed query / violation only — never the raw SQL text.
 // This is the single call site used by the proxy hot path.
+//
+// When the QWM security scorer is loaded, we attach its harm probability
+// (risk_score) — a model OUTPUT (a float in [0,1]), never the query content.
+// The configured SLO threshold (qwm_threshold_ms) travels too so the dashboard
+// can contextualise the score. p99_breach_prob is left 0 here: the cost
+// scorer's featurize path is heavier and gated, so we don't run it on the hot
+// path purely for telemetry.
 func emitTelemetryFor(eventType, decision string, v *PolicyViolation, pq *ParsedQuery, latencyMs float64) {
 	if telemetryClient == nil {
 		return
@@ -335,17 +349,34 @@ func emitTelemetryFor(eventType, decision string, v *PolicyViolation, pq *Parsed
 		}
 	}
 	costFlag := decision == "flag"
-	emitTelemetry(eventType, decision, table, op, latencyMs, costFlag)
+
+	var riskScore float64
+	qwmThresholdMs := costSLOMs
+	if qwmScorer != nil && pq != nil {
+		// Cheap logistic-regression scorer (no CGO / featurize). Output only.
+		riskScore = qwmScorer.Score(pq, QWMInfraState{})
+	}
+
+	emitTelemetryEvent(TelemetryEvent{
+		EventType:      eventType,
+		Decision:       decision,
+		TableName:      table,
+		OpType:         op,
+		LatencyMs:      latencyMs,
+		CostFlag:       costFlag,
+		RiskScore:      riskScore,
+		P99BreachProb:  0,
+		QWMThresholdMs: qwmThresholdMs,
+	})
 }
 
 // emitTelemetry is the package-level helper called from the proxy hot path.
 // It maps the proxy's decision vocabulary to the control-plane schema and
 // fires-and-forgets. Designed to be a cheap no-op when telemetry is off.
+// (No QWM risk attached — callers with a parsed query should prefer
+// emitTelemetryFor, which scores risk.)
 func emitTelemetry(eventType, decision, table, op string, latencyMs float64, costFlag bool) {
-	if telemetryClient == nil {
-		return
-	}
-	telemetryClient.Emit(TelemetryEvent{
+	emitTelemetryEvent(TelemetryEvent{
 		EventType: eventType,
 		Decision:  decision,
 		TableName: table,
@@ -353,4 +384,13 @@ func emitTelemetry(eventType, decision, table, op string, latencyMs float64, cos
 		LatencyMs: latencyMs,
 		CostFlag:  costFlag,
 	})
+}
+
+// emitTelemetryEvent is the single funnel onto the buffered client. No-op when
+// telemetry is not configured.
+func emitTelemetryEvent(ev TelemetryEvent) {
+	if telemetryClient == nil {
+		return
+	}
+	telemetryClient.Emit(ev)
 }

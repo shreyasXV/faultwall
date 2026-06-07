@@ -14,12 +14,15 @@ import (
 // to TelemetryEvent, this test fails — keeping query content off our servers.
 func TestTelemetryEventRedaction(t *testing.T) {
 	ev := TelemetryEvent{
-		EventType: "blocked",
-		Decision:  "block",
-		TableName: "users",
-		OpType:    "DELETE",
-		LatencyMs: 0.42,
-		CostFlag:  true,
+		EventType:      "blocked",
+		Decision:       "block",
+		TableName:      "users",
+		OpType:         "DELETE",
+		LatencyMs:      0.42,
+		CostFlag:       true,
+		RiskScore:      0.91,
+		P99BreachProb:  0.5,
+		QWMThresholdMs: 500,
 	}
 	b, err := json.Marshal(ev)
 	if err != nil {
@@ -34,6 +37,7 @@ func TestTelemetryEventRedaction(t *testing.T) {
 	allowed := map[string]bool{
 		"event_type": true, "decision": true, "table_name": true,
 		"op_type": true, "latency_ms": true, "cost_flag": true,
+		"risk_score": true, "p99_breach_prob": true, "qwm_threshold_ms": true,
 	}
 	for k := range m {
 		if !allowed[k] {

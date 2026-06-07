@@ -17,6 +17,23 @@ const (
 	defaultTemperature  = 0.2
 )
 
+// ProposalReport is the metadata + diff handed to a ProposalSink after APA
+// computes a policy diff. It carries ONLY the proposed diff (a human-review
+// artifact) plus metadata — never observation/query/row content.
+type ProposalReport struct {
+	AgentID    string
+	Title      string
+	YAMLDiff   string
+	Confidence float64
+	DiffLines  int
+}
+
+// ProposalSink, when set, is invoked (best-effort, off the hot path) with each
+// computed proposal so an external system (e.g. the control plane) can record
+// it for human review. It must never block APA or mutate policy. Errors are
+// the sink's own concern; RunOnce ignores them.
+type ProposalSink func(ProposalReport)
+
 // APAConfig is the runtime configuration for one APA run or cron loop.
 type APAConfig struct {
 	Enabled              bool
@@ -33,6 +50,11 @@ type APAConfig struct {
 	ObservationPath      string // path to observations.jsonl
 	PolicyPath           string // path to policies.yaml to diff against
 	AuditLogPath         string
+
+	// Sink, when non-nil, receives each computed proposal for external
+	// recording (e.g. control-plane review queue). Set by the caller; not
+	// loaded from YAML. Best-effort, off the hot path.
+	Sink ProposalSink `yaml:"-"`
 }
 
 // apaYAML is the on-disk representation of the apa: section.

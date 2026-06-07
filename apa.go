@@ -88,6 +88,16 @@ func runAPADispatch(args []string, runOnce bool) error {
 		cfg.Provider = *providerFlag
 	}
 
+	// If a control plane is configured (~/.faultwall/config.toml [control_plane]
+	// or env), also ship each proposed diff to its review queue (POST
+	// /v1/apa/propose). Metadata + diff only; off the APA cron path. PRs are
+	// still opened as before — this is additive.
+	if cpCfg, ok := loadControlPlaneConfig(); ok || (cpCfg.URL != "" && cpCfg.Token != "") {
+		if apaClient := NewAPAProposalClient(cpCfg); apaClient != nil {
+			cfg.Sink = apaClient.Sink()
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
