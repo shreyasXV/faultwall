@@ -31,7 +31,7 @@ services:
       POLICY_FILE: /app/policies.yaml
       POLICY_ENFORCEMENT: enforce
     volumes:
-      - ./dev/demo-policies.yaml:/app/policies.yaml:ro
+      - ./dev/easebuzz-policies.yaml:/app/policies.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +47,7 @@ services:
       POLICY_FILE: /app/policies.yaml
       POLICY_ENFORCEMENT: enforce
     volumes:
-      - ./dev/demo-policies.yaml:/app/policies.yaml:ro
+      - ./dev/easebuzz-policies.yaml:/app/policies.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy

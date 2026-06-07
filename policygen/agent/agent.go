@@ -163,6 +163,21 @@ func processAgent(
 		return "", fmt.Errorf("diff too large for agent %s: %d lines (limit %d)", agentID, n, cfg.PerAgentMaxDiffLines)
 	}
 
+	// Report the proposal to an external sink (e.g. control-plane review queue)
+	// if one is configured. Best-effort and decoupled: we ship ONLY the diff (a
+	// human-review artifact) + metadata, never observations/query content. A
+	// panicking or slow sink must not break the APA run, so we guard it.
+	if cfg.Sink != nil {
+		title := fmt.Sprintf("apa: policy proposal for agent %s (confidence %.0f%%)", agentID, proposal.Confidence*100)
+		reportProposalSafe(cfg.Sink, ProposalReport{
+			AgentID:    agentID,
+			Title:      title,
+			YAMLDiff:   diffText,
+			Confidence: proposal.Confidence,
+			DiffLines:  CountDiffLines(diffText),
+		})
+	}
+
 	// Open git PR.
 	branch := BranchName(agentID, time.Now())
 	title := fmt.Sprintf("apa: policy proposal for agent %s (confidence %.0f%%)", agentID, proposal.Confidence*100)
@@ -215,6 +230,17 @@ func notifySlack(webhookURL, agentID, prURL string, confidence float64) {
 // readFileBytes is a small helper used by multiple files in this package.
 func readFileBytes(path string) ([]byte, error) {
 	return os.ReadFile(path)
+}
+
+// reportProposalSafe invokes a ProposalSink, recovering from any panic so a
+// misbehaving sink can never break an APA run.
+func reportProposalSafe(sink ProposalSink, rep ProposalReport) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[apa] proposal sink panicked (ignored): %v", r)
+		}
+	}()
+	sink(rep)
 }
 
 // dirOf returns the directory part of a file path.

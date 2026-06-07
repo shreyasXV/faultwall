@@ -14,6 +14,11 @@ import (
 // using yaml.Node to preserve comments, key order, and indentation style in the
 // unchanged parts of the document.
 //
+// As a correctness invariant, any fingerprint hash that appears in the patch's
+// allowed_fingerprints (for any agent) is auto-removed from that agent's
+// pending_review. This prevents stale pending entries from surviving an APA
+// promotion. Surfaced by the RFC-002 E2E run (2026-05-17).
+//
 // Before (map[string]any round-trip):
 //
 //	# my comment — LOST
@@ -54,7 +59,15 @@ func ApplyPatch(policyPath, patch string) ([]byte, error) {
 	}
 
 	if baseDoc.Kind == yaml.DocumentNode && overlayDoc.Kind == yaml.DocumentNode {
+		// Pre-merge: collect promoted fingerprint hashes from the overlay so we
+		// can prune them from pending_review after the merge.
+		promotedByAgent := promotedHashesPerAgent(overlayDoc.Content[0])
+
 		mergeNodes(baseDoc.Content[0], overlayDoc.Content[0])
+
+		// Post-merge: walk base and remove any pending_review entry whose hash
+		// was promoted in this patch.
+		prunePromotedFromPending(baseDoc.Content[0], promotedByAgent)
 	}
 
 	// Use SetIndent(2) to match FaultWall's policy file convention.
@@ -68,6 +81,102 @@ func ApplyPatch(policyPath, patch string) ([]byte, error) {
 	}
 	enc.Close()
 	return buf.Bytes(), nil
+}
+
+// promotedHashesPerAgent walks the patch's agents.<id>.allowed_fingerprints
+// section and returns map[agentID]set-of-hashes. Used to drive auto-prune.
+func promotedHashesPerAgent(patchRoot *yaml.Node) map[string]map[string]struct{} {
+	out := make(map[string]map[string]struct{})
+	if patchRoot == nil || patchRoot.Kind != yaml.MappingNode {
+		return out
+	}
+	agents := findMappingValue(patchRoot, "agents")
+	if agents == nil || agents.Kind != yaml.MappingNode {
+		return out
+	}
+	for i := 0; i < len(agents.Content)-1; i += 2 {
+		agentID := agents.Content[i].Value
+		agentNode := agents.Content[i+1]
+		if agentNode.Kind != yaml.MappingNode {
+			continue
+		}
+		allowed := findMappingValue(agentNode, "allowed_fingerprints")
+		if allowed == nil || allowed.Kind != yaml.SequenceNode {
+			continue
+		}
+		hashes := make(map[string]struct{})
+		for _, entry := range allowed.Content {
+			if entry.Kind != yaml.MappingNode {
+				continue
+			}
+			hashNode := findMappingValue(entry, "hash")
+			if hashNode != nil && hashNode.Value != "" {
+				hashes[hashNode.Value] = struct{}{}
+			}
+		}
+		if len(hashes) > 0 {
+			out[agentID] = hashes
+		}
+	}
+	return out
+}
+
+// prunePromotedFromPending removes any pending_review entry whose hash matches
+// a promoted hash for that agent. Agents not in promotedByAgent are untouched.
+func prunePromotedFromPending(baseRoot *yaml.Node, promotedByAgent map[string]map[string]struct{}) {
+	if baseRoot == nil || baseRoot.Kind != yaml.MappingNode || len(promotedByAgent) == 0 {
+		return
+	}
+	agents := findMappingValue(baseRoot, "agents")
+	if agents == nil || agents.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i < len(agents.Content)-1; i += 2 {
+		agentID := agents.Content[i].Value
+		agentNode := agents.Content[i+1]
+		if agentNode.Kind != yaml.MappingNode {
+			continue
+		}
+		promoted, ok := promotedByAgent[agentID]
+		if !ok {
+			continue
+		}
+		pending := findMappingValue(agentNode, "pending_review")
+		if pending == nil || pending.Kind != yaml.SequenceNode {
+			continue
+		}
+		kept := pending.Content[:0]
+		for _, entry := range pending.Content {
+			if entry.Kind != yaml.MappingNode {
+				kept = append(kept, entry)
+				continue
+			}
+			hashNode := findMappingValue(entry, "hash")
+			if hashNode == nil {
+				kept = append(kept, entry)
+				continue
+			}
+			if _, isPromoted := promoted[hashNode.Value]; isPromoted {
+				continue // drop — promoted to allowed_fingerprints
+			}
+			kept = append(kept, entry)
+		}
+		pending.Content = kept
+	}
+}
+
+// findMappingValue returns the value Node for the given key in a MappingNode,
+// or nil if not present. Helper for the patch-walking helpers above.
+func findMappingValue(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i < len(m.Content)-1; i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
 }
 
 // mergeNodes merges overlay into base, preserving base's comments and key ordering.

@@ -5,6 +5,16 @@
 #   curl -fsSL https://raw.githubusercontent.com/shreyasXV/faultwall/main/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --version v0.3.0
 #   curl -fsSL .../install.sh | bash -s -- --dir ~/bin
+#   curl -fsSL .../install.sh | bash -s -- --token TFW_xxx --control-plane https://api.faultwall.com
+#
+# Flags:
+#   --version VER        Release tag to install (default: latest)
+#   --dir DIR            Install directory (default: /usr/local/bin)
+#   --token TOKEN        Control-plane tenant token (enables auto-enroll + phone-home)
+#   --control-plane URL  Control-plane base URL (e.g. https://api.faultwall.com)
+#   --mode MODE          Enrollment mode: monitor (default) | proxy
+#   --dry-run            Parse flags + print plan, then exit (no download/install)
+#   --help, -h           Show this help
 #
 set -euo pipefail
 
@@ -12,11 +22,19 @@ REPO="shreyasXV/faultwall"
 BIN_NAME="faultwall"
 INSTALL_DIR="/usr/local/bin"
 VERSION="latest"
+FW_TOKEN=""
+CONTROL_PLANE=""
+MODE="monitor"
+DRY_RUN=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --version) VERSION="$2"; shift 2 ;;
-    --dir)     INSTALL_DIR="$2"; shift 2 ;;
+    --version)       VERSION="$2"; shift 2 ;;
+    --dir)           INSTALL_DIR="$2"; shift 2 ;;
+    --token)         FW_TOKEN="$2"; shift 2 ;;
+    --control-plane) CONTROL_PLANE="$2"; shift 2 ;;
+    --mode)          MODE="$2"; shift 2 ;;
+    --dry-run)       DRY_RUN=1; shift ;;
     --help|-h)
       grep '^#' "$0" | sed 's/^# \?//'
       exit 0
@@ -24,6 +42,18 @@ while [[ $# -gt 0 ]]; do
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+# Normalize mode
+case "$MODE" in
+  monitor|proxy) ;;
+  *) echo "Invalid --mode '$MODE' (use monitor|proxy); defaulting to monitor" >&2; MODE="monitor" ;;
+esac
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "dry-run: VERSION=$VERSION INSTALL_DIR=$INSTALL_DIR MODE=$MODE"
+  echo "dry-run: CONTROL_PLANE=${CONTROL_PLANE:-<none>} TOKEN=$( [[ -n "$FW_TOKEN" ]] && echo '<set>' || echo '<none>' )"
+  exit 0
+fi
 
 # Detect OS and arch
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -110,6 +140,63 @@ fi
 
 echo
 echo "✅ Installed faultwall $VERSION → $INSTALL_DIR/$BIN_NAME"
+
+# ── Control-plane enrollment (optional, non-fatal) ──
+# If --token + --control-plane were supplied, register this installation and
+# write a local config so the proxy can phone home (metadata only — never
+# query text or policy bodies).
+if [[ -n "$FW_TOKEN" && -n "$CONTROL_PLANE" ]]; then
+  CP_URL="${CONTROL_PLANE%/}"
+  CONFIG_DIR="${HOME}/.faultwall"
+  CONFIG_FILE="${CONFIG_DIR}/config.toml"
+  HOST_NAME="$(hostname 2>/dev/null || echo unknown)"
+
+  echo
+  echo "→ Enrolling with control plane $CP_URL (mode: $MODE)..."
+  mkdir -p "$CONFIG_DIR"
+
+  ENROLL_BODY=$(printf '{"hostname":"%s","mode":"%s","version":"%s","pg_target_redacted":"%s"}' \
+    "$HOST_NAME" "$MODE" "$VERSION" "redacted")
+
+  ENROLL_OK=0
+  ENROLL_RESP=""
+  if ENROLL_RESP=$(curl -fsSL -X POST "${CP_URL}/v1/enroll" \
+        -H "Authorization: Bearer ${FW_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "$ENROLL_BODY" 2>/dev/null); then
+    ENROLL_OK=1
+  fi
+
+  # Best-effort parse of installation_id from the JSON response.
+  INSTALL_ID=""
+  if [[ -n "$ENROLL_RESP" ]]; then
+    INSTALL_ID=$(printf '%s' "$ENROLL_RESP" \
+      | grep -o '"installation_id": *"[^"]*"' \
+      | head -1 | sed 's/.*"installation_id": *"\([^"]*\)".*/\1/')
+  fi
+
+  # Write config regardless so the proxy can retry phone-home later.
+  umask 077
+  cat > "$CONFIG_FILE" <<EOF
+# FaultWall control-plane link — written by install.sh
+# Metadata-only telemetry. Query text and policy bodies stay on this host.
+[control_plane]
+url = "${CP_URL}"
+token = "${FW_TOKEN}"
+mode = "${MODE}"
+installation_id = "${INSTALL_ID}"
+telemetry_enabled = true
+EOF
+  chmod 600 "$CONFIG_FILE" 2>/dev/null || true
+
+  if [[ "$ENROLL_OK" -eq 1 ]]; then
+    echo "  ✓ enrolled (installation_id: ${INSTALL_ID:-unknown})"
+  else
+    echo "  ⚠️  enroll request failed — wrote config anyway; the proxy will retry phone-home on start." >&2
+  fi
+  echo "  → config: $CONFIG_FILE"
+fi
+
 echo
 echo "Next: run"
 echo "  faultwall init"

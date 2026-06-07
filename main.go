@@ -141,6 +141,16 @@ func main() {
 		}()
 		log.Printf("🛡️  FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
 
+		// Optional control-plane telemetry (metadata only). Enabled when
+		// ~/.faultwall/config.toml has a [control_plane] url+token (written by
+		// install.sh) and telemetry_enabled is true. Fire-and-forget: never
+		// blocks the query path.
+		if cpCfg, ok := loadControlPlaneConfig(); ok {
+			telemetryClient = NewTelemetryClient(cpCfg)
+			telemetryClient.StartHeartbeat(60 * time.Second)
+			log.Printf("📡 Control-plane telemetry enabled → %s (metadata only)", cpCfg.URL)
+		}
+
 		// Start proxy in a goroutine so we can also run the API server
 		go runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey, upstreamTLS, upstreamTLSSkipVerify)
 
@@ -200,6 +210,9 @@ func main() {
 			if err := observationStore.Flush(); err != nil {
 				log.Printf("observation shutdown flush: %v", err)
 			}
+		}
+		if telemetryClient != nil {
+			telemetryClient.Close()
 		}
 		return
 	}
