@@ -10,6 +10,9 @@ RUN go mod download
 
 # Copy source
 COPY *.go ./
+COPY policygen/ ./policygen/
+COPY internal/ ./internal/
+COPY cmd/ ./cmd/
 COPY templates/ ./templates/
 COPY assets/ ./assets/
 COPY policies.yaml ./

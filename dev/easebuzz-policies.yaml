@@ -1,0 +1,128 @@
+# FaultWall Easebuzz Demo — Policy Configuration
+#
+# Three production-shaped agents an Indian payments aggregator would actually run:
+#   - refund-agent       : processes refunds; MUST scope by merchant_id; never DELETE
+#   - support-copilot    : answers merchant support queries; cannot read kyc_documents.aadhaar_number
+#   - analytics-agent    : read-only reporting; bounded rows, QWM watches the tail
+
+default_policy: deny
+
+# Global function blocklist
+blocked_functions:
+  - pg_sleep
+  - pg_terminate_backend
+  - pg_cancel_backend
+  - pg_reload_conf
+  - pg_rotate_logfile
+  - lo_export
+  - lo_import
+  - lo_unlink
+  - pg_read_file
+  - pg_read_binary_file
+  - pg_ls_dir
+  - pg_stat_file
+  - set_config
+  - dblink
+  - dblink_exec
+  - pg_execute_server_program
+
+agents:
+  refund-agent:
+    description: "Refund processing agent — must scope by merchant_id"
+    auth_token: "refund-secret-easebuzz"
+    missions:
+      process-refund:
+        tables:
+          - "public.transactions"
+          - "public.merchants"
+        max_rows: 500
+        max_query_time_ms: 5000
+        conditions:
+          - "UPDATE must include WHERE clause"
+          - "UPDATE on transactions must filter by merchant_id"
+
+    blocked_operations:
+      - DROP
+      - TRUNCATE
+      - DELETE
+      - ALTER
+      - CREATE
+      - GRANT
+
+    blocked_tables:
+      - public.kyc_documents
+      - public.payouts
+
+    pending_review:
+      - hash: deadbeef
+        sql: "DELETE FROM public.transactions WHERE id IN (?, ?, ?)"
+        seen: 3
+        verdict: unknown
+        reason: "DELETE on transactions — outside refund agent scope"
+
+  support-copilot:
+    description: "Merchant support copilot — read-only, no PII"
+    auth_token: "support-secret-easebuzz"
+    missions:
+      answer-merchant-query:
+        tables:
+          - "public.transactions"
+          - "public.merchants"
+          - "public.payouts"
+        max_rows: 200
+        max_query_time_ms: 3000
+
+    blocked_operations:
+      - INSERT
+      - UPDATE
+      - DELETE
+      - DROP
+      - TRUNCATE
+      - ALTER
+      - CREATE
+      - GRANT
+
+    blocked_tables:
+      - public.kyc_documents
+
+    blocked_columns:
+      public.kyc_documents:
+        - aadhaar_number
+        - pan_number
+
+  analytics-agent:
+    description: "Reporting / dashboards — read-only, bounded, QWM watches tail latency"
+    auth_token: "analytics-secret-easebuzz"
+    missions:
+      daily-rollup:
+        tables:
+          - "public.transactions"
+          - "public.merchants"
+          - "public.payouts"
+        max_rows: 10000
+        max_query_time_ms: 10000
+
+    blocked_operations:
+      - INSERT
+      - UPDATE
+      - DELETE
+      - DROP
+      - TRUNCATE
+      - ALTER
+      - CREATE
+      - GRANT
+
+    blocked_tables:
+      - public.kyc_documents
+
+# APA — Autonomous Policy Agent (fake provider for demo)
+apa:
+  enabled: true
+  provider: fake
+  model: fake-1
+  schedule: "0 * * * *"
+  window: "168h"
+  base_branch: main
+  max_tokens_per_run: 4000
+  per_agent_max_diff_lines: 50
+  schema_cache_ttl: "24h"
