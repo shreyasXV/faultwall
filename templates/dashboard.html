@@ -920,6 +920,18 @@
     </div>
   </div>
 
+  <!-- APA Proposals (Autonomous Policy Author) -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🧠 APA Proposals</span>
+      <span class="card-subtitle" id="apa-pending-count">—</span>
+      <span class="card-subtitle" style="margin-left:8px; color:var(--muted);">what APA is proposing for your policy — review-gated, nothing auto-enforced</span>
+    </div>
+    <div id="apa-list">
+      <div class="empty">No APA activity yet. Run <code>faultwall apa sync</code> then <code>faultwall apa run</code> to generate proposals.</div>
+    </div>
+  </div>
+
   <!-- Connected Agents -->
   <div class="card">
     <div class="card-header">
@@ -1130,6 +1142,7 @@
   <a href="/api/agents/status" target="_blank">/agents</a> ·
   <a href="/api/violations" target="_blank">/violations</a> ·
   <a href="/api/qwm/flags" target="_blank">/qwm/flags</a> ·
+  <a href="/api/apa/proposals" target="_blank">/apa/proposals</a> ·
   <a href="/api/policies" target="_blank">/policies</a> ·
   <a href="/api/firewall/agents" target="_blank">/firewall</a>
 </footer>
@@ -1933,6 +1946,7 @@ async function refresh() {
     refreshThrottle();
     refreshViolations();
     refreshQWMFlags();
+    refreshAPAProposals();
     refreshAgentStats();
     refreshAgentConnections();
 
@@ -1983,6 +1997,22 @@ function renderQWMFlags(filter) {
     const score = (typeof x.score === 'number') ? x.score.toFixed(3) : '—';
     const feats = (x.top_features || []).join(', ');
     const tables = (x.tables || []).join(', ');
+    const c = x.conditions || {};
+    const condBits = [];
+    if (typeof c.utilization === 'number') condBits.push(`util ${(c.utilization*100).toFixed(0)}%`);
+    if (c.active_backends) condBits.push(`${c.active_backends} active`);
+    if (c.blocked_backends) condBits.push(`⚠ ${c.blocked_backends} lock-blocked`);
+    if (c.longest_active_ms >= 1000) condBits.push(`longest ${(c.longest_active_ms/1000).toFixed(1)}s`);
+    if (typeof c.cache_hit_ratio === 'number' && c.cache_hit_ratio > 0 && c.cache_hit_ratio < 0.9) condBits.push(`cache ${(c.cache_hit_ratio*100).toFixed(0)}%`);
+    if (c.base_service_ms) condBits.push(`base ${c.base_service_ms.toFixed(0)}ms`);
+    if (c.congestion_x > 1) condBits.push(`×${c.congestion_x.toFixed(1)} congestion`);
+    const predLine = (x.predicted_ms && x.p_breach)
+      ? `<div class="violation-meta" style="color:var(--red);">predicted ~${(x.predicted_ms/1000).toFixed(1)}s · P(SLO breach) ${(x.p_breach*100).toFixed(0)}%</div>`
+      : '';
+    const reasonLine = x.reason
+      ? `<div class="violation-meta" style="color:var(--fg);">${escHtml(x.reason)}</div>` : '';
+    const condLine = condBits.length
+      ? `<div class="violation-meta">DB conditions: ${escHtml(condBits.join(' · '))}</div>` : '';
     return `<div class="violation-item" style="border-left:3px solid var(--accent);">
       <span class="violation-icon">⚡</span>
       <div class="violation-body">
@@ -1993,6 +2023,9 @@ function renderQWMFlags(filter) {
           ${tables ? ' (tables: ' + escHtml(tables) + ')' : ''}
         </div>
         <div class="violation-query" title="${escHtml(x.query)}">${escHtml(x.query)}</div>
+        ${reasonLine}
+        ${predLine}
+        ${condLine}
         <div class="violation-meta">${feats ? 'top features: ' + escHtml(feats) + ' · ' : ''}${ts}</div>
       </div>
     </div>`;
@@ -2017,6 +2050,62 @@ async function refreshQWMFlags() {
   const fe = document.getElementById('qwm-filter');
   if (fe) fe.addEventListener('input', function(){ renderQWMFlags(this.value); });
 })();
+
+// ── APA Proposals (local visibility, no control plane needed) ──────────────
+async function refreshAPAProposals() {
+  const list = document.getElementById('apa-list');
+  if (!list) return;
+  try {
+    const data = await fetchJSON('/api/apa/proposals');
+    const agents = data.agents || [];
+    const runs = data.recent_runs || [];
+    const pending = data.pending_total || 0;
+    const countEl = document.getElementById('apa-pending-count');
+    if (countEl) countEl.textContent = pending > 0 ? pending + ' pending review' : (agents.length ? 'all clear' : 'no data');
+
+    let html = '';
+
+    // Pending review queue — the queries APA wants a human to decide on.
+    const pendingItems = [];
+    agents.forEach(a => (a.pending_review || []).forEach(fp => pendingItems.push({agent: a.agent_id, fp})));
+    if (pendingItems.length) {
+      html += '<div class="violation-meta" style="margin:4px 0; color:var(--muted);">Pending review</div>';
+      html += pendingItems.slice(0, 30).map(({agent, fp}) => `
+        <div class="violation-item" style="border-left:3px solid var(--accent);">
+          <span class="violation-icon">⏳</span>
+          <div class="violation-body">
+            <div class="violation-msg"><span class="violation-badge monitored">PENDING</span> Agent <strong>${escHtml(agent)}</strong> ${fp.verdict ? '· ' + escHtml(fp.verdict) : ''}</div>
+            <div class="violation-query" title="${escHtml(fp.sql || '')}">${escHtml(fp.sql || fp.hash || '')}</div>
+            ${fp.reason ? `<div class="violation-meta">${escHtml(fp.reason)}</div>` : ''}
+            <div class="violation-meta">seen ${fp.seen || 0}× · fingerprint ${escHtml((fp.hash||'').slice(0,16))}</div>
+          </div>
+        </div>`).join('');
+    }
+
+    // Recent APA runs — from the local audit log.
+    if (runs.length) {
+      html += '<div class="violation-meta" style="margin:8px 0 4px; color:var(--muted);">Recent APA runs</div>';
+      html += runs.slice(0, 10).map(r => {
+        const ts = r.timestamp ? timeAgo(r.timestamp) : '';
+        const conf = (typeof r.confidence === 'number' && r.confidence > 0) ? ` · confidence ${(r.confidence*100).toFixed(0)}%` : '';
+        const pr = r.pr_url ? ` · <a href="${escHtml(r.pr_url)}" target="_blank" style="color:var(--accent);">PR</a>` : '';
+        const err = r.error ? `<div class="violation-meta" style="color:var(--red);">error: ${escHtml(r.error)}</div>` : '';
+        return `<div class="violation-item">
+          <span class="violation-icon">${r.error ? '🔴' : '🧠'}</span>
+          <div class="violation-body">
+            <div class="violation-msg">Agent <strong>${escHtml(r.agent_id || '—')}</strong> · ${r.pending_count || 0} pending${conf}${pr}</div>
+            ${err}
+            <div class="violation-meta">${escHtml(r.provider || '')} · ${ts}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    list.innerHTML = html || '<div class="empty">No APA activity yet. Run <code>faultwall apa sync</code> then <code>faultwall apa run</code> to generate proposals.</div>';
+  } catch(e) {
+    list.innerHTML = '<div class="empty">APA endpoint unavailable</div>';
+  }
+}
 
 // Sparklines on separate interval (every 30s)
 setInterval(refreshSparklines, 30000);

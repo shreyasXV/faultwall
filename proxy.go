@@ -903,7 +903,8 @@ func scoreQueryShadow(agentLabel, query string, pq *ParsedQuery) {
 		top := qwmScorer.TopFeatures(pq, infra, 3)
 		logQWMFlag(agentLabel, query, score, top)
 
-		// RFC-003: enrich the flag with world-model predictions when available.
+		// RFC-003: enrich the flag with world-model predictions + the live DB
+		// conditions that drove it, so the user can see what's actually wrong.
 		rec := QWMFlagRecord{
 			Agent:       agentLabel,
 			Query:       querySnippet(query),
@@ -914,18 +915,35 @@ func scoreQueryShadow(agentLabel, query string, pq *ParsedQuery) {
 			Utilization: infra.Utilization,
 			Timestamp:   time.Now(),
 		}
+		var baseMs, congestion float64
+		usedModel := false
 		if wm, ok := qwmScorer.(*worldModelScorer); ok {
 			if predicted, pBreach, used := wm.Predict(pq, infra); used {
 				rec.PredictedMs = predicted
 				rec.PBreach = pBreach
+				usedModel = true
+				if b, known := wm.base.Base(pq.Fingerprint); known {
+					baseMs = b
+				}
+				congestion = congestionFactor(infra.Utilization, wm.artifact.Servers)
 			}
 		}
+		rec.Conditions = &FlagConditions{
+			ActiveBackends:  infra.ActiveBackends,
+			BlockedBackends: infra.BlockedBackends,
+			LongestActiveMs: infra.LongestActiveMs,
+			CacheHitRatio:   infra.CacheHitRatio,
+			TPS:             infra.TPS,
+			Utilization:     infra.Utilization,
+			BaseServiceMs:   baseMs,
+			CongestionX:     congestion,
+		}
+		rec.Reason = explainQWMFlag(pq, infra, rec, usedModel)
 		recordQWMFlag(rec)
 	}
 }
 
 // currentInfraState returns the live DB-state snapshot for the world model, or a
-// zero state (→ queuing-prior/fallback path) when no sampler is running.
 func currentInfraState() QWMInfraState {
 	if qwmStateSampler != nil {
 		return qwmStateSampler.Snapshot()
@@ -942,6 +960,65 @@ func recordQueryLatency(fingerprint string, latencyMs, utilization float64) {
 	if wm, ok := qwmScorer.(*worldModelScorer); ok {
 		wm.Observe(fingerprint, latencyMs, utilization)
 	}
+}
+
+// explainQWMFlag builds a plain-English reason for a flag so the user sees WHAT
+// is wrong with their database, not just "a query was risky". It distinguishes
+// the world-model (load-driven) path from the shape-based fallback path and
+// calls out the specific live conditions (high load, lock contention, low cache
+// hit, slow base query).
+func explainQWMFlag(pq *ParsedQuery, infra QWMInfraState, rec QWMFlagRecord, usedModel bool) string {
+	var parts []string
+
+	if usedModel && rec.PredictedMs > 0 {
+		// Load-driven world-model explanation: base × congestion → predicted vs SLO.
+		parts = append(parts, fmt.Sprintf(
+			"Under current load this query is predicted to take ~%.1fs (P(SLO breach)=%.0f%%).",
+			rec.PredictedMs/1000.0, rec.PBreach*100))
+		if rec.Conditions != nil && rec.Conditions.BaseServiceMs > 0 && rec.Conditions.CongestionX > 1 {
+			parts = append(parts, fmt.Sprintf(
+				"Its normal (unloaded) time is ~%.0fms, inflated ~%.1f× by current DB load.",
+				rec.Conditions.BaseServiceMs, rec.Conditions.CongestionX))
+		}
+	} else {
+		// Shape-based fallback: the query's shape is risky regardless of load.
+		parts = append(parts, fmt.Sprintf(
+			"Query shape scored risky (%s on %s).",
+			nonEmpty(pq.Operation, "operation"), tablesOrUnknown(pq.Tables)))
+	}
+
+	// Live DB conditions that contributed — these are the user's actual issues.
+	if infra.Utilization >= 0.8 {
+		parts = append(parts, fmt.Sprintf("Database is busy: %d active backend(s), utilization %.0f%%.",
+			infra.ActiveBackends, infra.Utilization*100))
+	}
+	if infra.BlockedBackends > 0 {
+		parts = append(parts, fmt.Sprintf("⚠ %d backend(s) blocked waiting on locks — lock contention.", infra.BlockedBackends))
+	}
+	if infra.LongestActiveMs >= 5000 {
+		parts = append(parts, fmt.Sprintf("Longest running query has been active %.1fs.", infra.LongestActiveMs/1000.0))
+	}
+	if infra.CacheHitRatio > 0 && infra.CacheHitRatio < 0.9 {
+		parts = append(parts, fmt.Sprintf("Low cache hit ratio (%.0f%%) — heavy disk reads.", infra.CacheHitRatio*100))
+	}
+	if len(parts) == 1 && infra.ActiveBackends > 0 {
+		parts = append(parts, fmt.Sprintf("(%d active backend(s) at flag time.)", infra.ActiveBackends))
+	}
+	return strings.Join(parts, " ")
+}
+
+func nonEmpty(s, fallback string) string {
+	if strings.TrimSpace(s) == "" {
+		return fallback
+	}
+	return s
+}
+
+func tablesOrUnknown(t []string) string {
+	if len(t) == 0 {
+		return "(no table)"
+	}
+	return strings.Join(t, ", ")
 }
 
 // recordObservation writes a query event to the global ObservationStore.

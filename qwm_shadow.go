@@ -255,6 +255,25 @@ type QWMFlagRecord struct {
 	PredictedMs float64 `json:"predicted_ms,omitempty"`
 	PBreach     float64 `json:"p_breach,omitempty"`
 	Utilization float64 `json:"utilization,omitempty"`
+
+	// WHY this query was flagged: a plain-English explanation plus the live DB
+	// conditions at flag time, so the user can see what's actually wrong with
+	// their database (not just "a query was risky").
+	Reason     string         `json:"reason"`
+	Conditions *FlagConditions `json:"conditions,omitempty"`
+}
+
+// FlagConditions is the live DB state captured at the moment a query was flagged,
+// so the user can correlate the flag to what their database was actually doing.
+type FlagConditions struct {
+	ActiveBackends  int     `json:"active_backends"`
+	BlockedBackends int     `json:"blocked_backends"`  // waiting on a lock
+	LongestActiveMs float64 `json:"longest_active_ms"`  // oldest running query
+	CacheHitRatio   float64 `json:"cache_hit_ratio"`
+	TPS             float64 `json:"tps"`
+	Utilization     float64 `json:"utilization"`        // ρ = active backends / cores
+	BaseServiceMs   float64 `json:"base_service_ms,omitempty"` // learned unloaded latency for this fp
+	CongestionX     float64 `json:"congestion_x,omitempty"`    // inflation multiplier 1/(1-ρ)
 }
 
 const qwmFlagRingSize = 500

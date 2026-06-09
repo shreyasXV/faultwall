@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
+
+	"github.com/shreyasXV/faultwall/policygen/agent"
 )
 
 // handleFirewallAgents returns all known agents (active and historical)
@@ -152,6 +155,41 @@ func handleQWMFlags(w http.ResponseWriter, r *http.Request) {
 		"count":     len(flags),
 		"threshold": qwmFlagThreshold,
 		"observe_only": true,
+	})
+}
+
+// handleAPAProposals returns the local APA state so a self-host user can see
+// what APA is proposing without a control plane or PR setup (Soumya request):
+//   - per-agent allowed_fingerprints + pending_review (from the policy file)
+//   - recent APA runs (from the local audit log: confidence, PR url, errors)
+// GET /api/apa/proposals
+func handleAPAProposals(w http.ResponseWriter, r *http.Request) {
+	policyPath := os.Getenv("POLICY_FILE")
+	if policyPath == "" {
+		policyPath = "./policies.yaml"
+	}
+	auditPath := os.Getenv("APA_AUDIT_LOG")
+	if auditPath == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			auditPath = home + "/.faultwall/apa_audit.jsonl"
+		}
+	}
+
+	agents, err := agent.LoadAPAView(policyPath)
+	if err != nil {
+		agents = nil // policy unreadable — still return runs + empty agents
+	}
+	runs, _ := agent.LoadRecentAuditRecords(auditPath, 50)
+
+	pendingTotal := 0
+	for _, a := range agents {
+		pendingTotal += len(a.PendingReview)
+	}
+
+	writeJSON(w, map[string]interface{}{
+		"agents":        agents,
+		"recent_runs":   runs,
+		"pending_total": pendingTotal,
 	})
 }
 
