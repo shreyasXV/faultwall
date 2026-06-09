@@ -120,11 +120,21 @@ func processAgent(
 	rec.OutputTokens = resp.OutputTokens
 	rec.LatencyMs = resp.LatencyMs
 
-	// Parse and validate LLM output. Retry once on parse failure.
+	// Parse and validate LLM output. Retry once on parse failure with a
+	// corrective instruction appended — the original code re-sent the identical
+	// prompt, so a model that ignored the schema failed identically twice
+	// (E2E finding F4). Echoing the parse error nudges the model to comply.
 	proposal, err := parseProposal(resp.Text)
 	if err != nil {
-		log.Printf("[apa] parse failed (attempt 1): %v — retrying", err)
-		resp, err = provider.Reason(ctx, prompt)
+		log.Printf("[apa] parse failed (attempt 1): %v — retrying with corrective prompt", err)
+		retryPrompt := prompt
+		retryPrompt.System = prompt.System + fmt.Sprintf(
+			"\n\nYOUR PREVIOUS RESPONSE FAILED TO PARSE: %v\n"+
+				"Respond with ONE raw JSON object and nothing else (no code fence, no prose). "+
+				"\"schema\" MUST be the string value \"%s\" (a value, not a key). "+
+				"Follow the OUTPUT FORMAT and patch schema rules exactly.",
+			err, ProposalSchema)
+		resp, err = provider.Reason(ctx, retryPrompt)
 		if err != nil {
 			rec.Error = "retry: " + err.Error()
 			return "", fmt.Errorf("provider.Reason retry: %w", err)

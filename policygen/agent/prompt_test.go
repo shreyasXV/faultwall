@@ -115,3 +115,13 @@ func TestSummarizePrompt(t *testing.T) {
 		t.Error("summary should contain pending count")
 	}
 }
+
+// F5: the system prompt must constrain output to the real FingerprintRule schema
+// and explicitly forbid the invented blocked_fingerprints field.
+func TestSystemPrompt_ConstrainsPatchSchema(t *testing.T) {
+	for _, want := range []string{"allowed_fingerprints", "pending_review", "blocked_operations", "NO \"blocked_fingerprints\""} {
+		if !strings.Contains(systemPrompt, want) {
+			t.Errorf("system prompt must mention %q", want)
+		}
+	}
+}
