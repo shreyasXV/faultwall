@@ -29,18 +29,96 @@ func runAPA(args []string) error {
 		return runAPADispatch(rest, true)
 	case "serve":
 		return runAPADispatch(rest, false)
+	case "sync":
+		return runAPASync(rest)
 	case "-h", "--help", "help":
-		fmt.Println("usage: faultwall apa <run|serve> [flags]")
+		fmt.Println("usage: faultwall apa <run|serve|sync> [flags]")
+		fmt.Println("  run     Run one APA reasoning cycle and exit")
+		fmt.Println("  serve   Run APA on the configured cron schedule")
+		fmt.Println("  sync    Classify observations.jsonl into allowed_fingerprints/pending_review")
 		fmt.Println("  --policy <path>        override policy file (default: ./policies.yaml or POLICY_FILE)")
 		fmt.Println("  --observations <path>  override observations.jsonl path")
 		fmt.Println("  --provider <name>      override apa.provider (openai|litellm|anthropic|fake)")
+		fmt.Println("  --window <dur>         sync: observation look-back window (e.g. 24h, 7d; default 24h)")
+		fmt.Println("  --dry-run             sync: print the result without writing the policy file")
 		return nil
 	default:
-		return fmt.Errorf("unknown apa subcommand %q (want: run|serve)", subcmd)
+		return fmt.Errorf("unknown apa subcommand %q (want: run|serve|sync)", subcmd)
 	}
 }
 
 // runAPADispatch parses common flags, loads config, and either runs once or serves.
+// runAPASync implements `faultwall apa sync` (F3): it classifies
+// observations.jsonl into allowed_fingerprints/pending_review and writes them
+// back into the policy file, bridging the proxy's observations to APA's input.
+func runAPASync(args []string) error {
+	fs := flag.NewFlagSet("apa sync", flag.ContinueOnError)
+	policyFlag := fs.String("policy", "", "path to policies.yaml (defaults to POLICY_FILE env or ./policies.yaml)")
+	obsFlag := fs.String("observations", "", "path to observations.jsonl (defaults to OBSERVATION_PATH env or ~/.faultwall/observations.jsonl)")
+	windowFlag := fs.String("window", "24h", "observation look-back window (e.g. 24h, 7d)")
+	dryRun := fs.Bool("dry-run", false, "print the result without writing the policy file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	policyPath := *policyFlag
+	if policyPath == "" {
+		policyPath = os.Getenv("POLICY_FILE")
+	}
+	if policyPath == "" {
+		policyPath = "./policies.yaml"
+	}
+	obsPath := *obsFlag
+	if obsPath == "" {
+		obsPath = os.Getenv("OBSERVATION_PATH")
+	}
+	if obsPath == "" {
+		home, _ := os.UserHomeDir()
+		obsPath = home + "/.faultwall/observations.jsonl"
+	}
+
+	window, err := agent.ParseWindow(*windowFlag)
+	if err != nil {
+		return fmt.Errorf("invalid --window %q: %w", *windowFlag, err)
+	}
+
+	res, err := agent.SyncPolicy(policyPath, obsPath, window, *dryRun)
+	if err != nil {
+		return err
+	}
+
+	totalAllowed, totalPending := 0, 0
+	for _, n := range res.AddedAllowed {
+		totalAllowed += n
+	}
+	for _, n := range res.AddedPending {
+		totalPending += n
+	}
+
+	if !res.Changed {
+		fmt.Println("[apa sync] no new fingerprints to classify — policy unchanged")
+		return nil
+	}
+	for agentID := range res.AddedAllowed {
+		fmt.Printf("[apa sync] agent=%s +%d allowed, +%d pending\n",
+			agentID, res.AddedAllowed[agentID], res.AddedPending[agentID])
+	}
+	for agentID := range res.AddedPending {
+		if _, seen := res.AddedAllowed[agentID]; !seen {
+			fmt.Printf("[apa sync] agent=%s +0 allowed, +%d pending\n", agentID, res.AddedPending[agentID])
+		}
+	}
+	if *dryRun {
+		fmt.Printf("[apa sync] DRY RUN — %d allowed, %d pending would be added (policy NOT written)\n", totalAllowed, totalPending)
+		fmt.Println("---")
+		fmt.Print(string(res.MergedYAML))
+	} else {
+		fmt.Printf("[apa sync] wrote %s — %d allowed, %d pending added. Run `faultwall apa run` to reason over pending.\n",
+			policyPath, totalAllowed, totalPending)
+	}
+	return nil
+}
+
 func runAPADispatch(args []string, runOnce bool) error {
 	name := "apa run"
 	if !runOnce {
