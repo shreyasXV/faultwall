@@ -88,11 +88,13 @@ func NewProvider(cfg APAConfig) (Provider, error) {
 	switch cfg.Provider {
 	case "openai":
 		return newOpenAIProvider(cfg)
+	case "litellm":
+		return newLiteLLMProvider(cfg)
 	case "anthropic":
 		return newAnthropicProvider(cfg)
 	case "fake", "":
 		return newFakeProvider(cfg), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q — valid: openai, anthropic, fake", cfg.Provider)
+		return nil, fmt.Errorf("unknown provider %q — valid: openai, litellm, anthropic, fake", cfg.Provider)
 	}
 }

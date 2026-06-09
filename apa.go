@@ -33,7 +33,7 @@ func runAPA(args []string) error {
 		fmt.Println("usage: faultwall apa <run|serve> [flags]")
 		fmt.Println("  --policy <path>        override policy file (default: ./policies.yaml or POLICY_FILE)")
 		fmt.Println("  --observations <path>  override observations.jsonl path")
-		fmt.Println("  --provider <name>      override apa.provider (openai|anthropic|fake)")
+		fmt.Println("  --provider <name>      override apa.provider (openai|litellm|anthropic|fake)")
 		return nil
 	default:
 		return fmt.Errorf("unknown apa subcommand %q (want: run|serve)", subcmd)
