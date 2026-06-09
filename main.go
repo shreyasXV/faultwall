@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -192,7 +193,7 @@ func main() {
 		log.Printf("📊 FaultWall API server on http://%s", apiAddr)
 		srv := &http.Server{Addr: apiAddr, Handler: mux}
 
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
 		go func() {
@@ -319,7 +320,7 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	}
 
 	// Graceful shutdown context
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Start background collection
