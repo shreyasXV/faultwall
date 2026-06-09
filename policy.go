@@ -190,7 +190,10 @@ func NewPolicyEngine() *PolicyEngine {
 		pe.config = &PolicyConfig{
 			DefaultPolicy: "allow",
 			Agents:        make(map[string]AgentPolicy),
-			Unidentified:  UnidentifiedPolicy{Policy: "allow"},
+			// Secure-by-default: when no policy file loads, unidentified
+			// connections (no agent: identity) are denied rather than allowed.
+			// An anonymous connection must never silently read data.
+			Unidentified: UnidentifiedPolicy{Policy: "deny"},
 		}
 	}
 
@@ -1361,12 +1364,29 @@ func isAnyTableReferenced(target string, referenced []string) bool {
 	return false
 }
 
+// isTableAllowed reports whether the referenced table matches any entry in a
+// mission's allowed-tables list. Match modes mirror isTableBlocked:
+//   - Exact match: "public.users" == "public.users"
+//   - Wildcard prefix: "public.*" matches "public.messages"; bare "*" matches all
+//   - Schema-agnostic bare-name match: allow "users" matches "public.users"
 func isTableAllowed(table string, allowedList []string) bool {
 	tableLower := strings.ToLower(table)
 	for _, allowed := range allowedList {
 		// Mission tables use format "schema.table: [ops]" or just "schema.table"
 		allowedClean := strings.Split(allowed, ":")[0]
 		allowedClean = strings.TrimSpace(strings.ToLower(allowedClean))
+		// Bare "*" allows any table.
+		if allowedClean == "*" {
+			return true
+		}
+		// Wildcard prefix: "public.*" matches any "public.<t>".
+		if strings.HasSuffix(allowedClean, ".*") {
+			prefix := strings.TrimSuffix(allowedClean, "*")
+			if strings.HasPrefix(tableLower, prefix) {
+				return true
+			}
+			continue
+		}
 		if tableLower == allowedClean {
 			return true
 		}
