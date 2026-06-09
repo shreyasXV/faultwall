@@ -50,9 +50,14 @@ agents:
       - pg_catalog.*
       - information_schema.*
 
-# Unidentified connections (no agent: prefix) — monitor only
+# Unidentified connections (no agent: prefix) — DENIED by default.
+# Secure-by-default: a connection that does not present an agent: identity
+# (via application_name) is rejected outright. To allow a service to connect,
+# give it an agent: identity + mission, or switch this to "monitor" knowingly.
 unidentified:
-  policy: monitor
+  policy: deny
   blocked_tables:
+    - public.users           # PII — never expose to anonymous connections
+    - public.payments        # payment data
     - pg_catalog.*
     - information_schema.*

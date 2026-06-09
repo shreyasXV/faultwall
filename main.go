@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -174,6 +175,7 @@ func main() {
 		mux.HandleFunc("/api/policies", handlePolicies)
 		mux.HandleFunc("/api/policies/reload", handlePoliciesReload)
 		mux.HandleFunc("/api/violations", handleViolations)
+		mux.HandleFunc("/api/qwm/flags", handleQWMFlags)
 		mux.HandleFunc("/api/rules/block", handleBlockRule)
 		mux.HandleFunc("/api/rules/preview", handleRulePreview)
 		mux.HandleFunc("/api/rules/create", handleRuleCreate)
@@ -189,10 +191,19 @@ func main() {
 		mux.HandleFunc("/", handleDashboard)
 
 		apiAddr := fmt.Sprintf("%s:%s", apiBind, apiPort)
-		log.Printf("📊 FaultWall API server on http://%s", apiAddr)
+
+		// Advertise a friendly .local name via mDNS so customers open the
+		// dashboard at http://faultwall.local:PORT instead of localhost. Override
+		// with FAULTWALL_HOSTNAME. Best-effort; never blocks startup.
+		localHost := os.Getenv("FAULTWALL_HOSTNAME")
+		if localHost == "" {
+			localHost = defaultLocalHost
+		}
+		startMDNSResponder(localHost)
+		log.Printf("\U0001f4ca FaultWall dashboard: %s  (also http://localhost:%s)", localDashboardURL(localHost, apiPort), apiPort)
 		srv := &http.Server{Addr: apiAddr, Handler: mux}
 
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
 		go func() {
@@ -319,7 +330,7 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	}
 
 	// Graceful shutdown context
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	// Start background collection
@@ -437,7 +448,16 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	}
 
 	listenAddr := fmt.Sprintf("%s:%s", bindAddr, port)
-	log.Printf("🚀 FaultWall running on http://%s", listenAddr)
+
+	// Advertise a friendly .local name via mDNS so customers reach the dashboard
+	// at http://faultwall.local:PORT instead of http://localhost:PORT. Override
+	// with FAULTWALL_HOSTNAME; best-effort, never blocks startup.
+	localHost := os.Getenv("FAULTWALL_HOSTNAME")
+	if localHost == "" {
+		localHost = defaultLocalHost
+	}
+	startMDNSResponder(localHost)
+	log.Printf("\U0001f6e1\ufe0f  FaultWall dashboard: %s  (also http://localhost:%s)", localDashboardURL(localHost, port), port)
 
 	srv := &http.Server{
 		Addr:    listenAddr,

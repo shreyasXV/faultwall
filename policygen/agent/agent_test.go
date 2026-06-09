@@ -506,3 +506,59 @@ func runOnceWithProvider(ctx context.Context, cfg APAConfig, provider Provider) 
 	}
 	return prURLs, nil
 }
+
+// F4: parseProposal must tolerate a ```json-fenced response (what Claude Opus
+// returns via Bedrock/Anthropic) and prose-wrapped JSON. Before the fix a bare
+// json.Unmarshal failed and the single retry re-failed identically.
+func TestParseProposal_FencedAndProseJSON(t *testing.T) {
+	data, err := os.ReadFile("testdata/golden_proposal.json")
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	clean := string(data)
+
+	cases := map[string]string{
+		"json_fence":  "```json\n" + clean + "\n```",
+		"bare_fence":  "```\n" + clean + "\n```",
+		"prose_wrap":  "Here is the proposal you asked for:\n\n" + clean + "\n\nLet me know if you'd like changes.",
+		"clean_noop":  clean, // already-clean JSON must still parse (no regression)
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			p, err := parseProposal(in)
+			if err != nil {
+				t.Fatalf("parse %s: %v", name, err)
+			}
+			if p.AgentID != "analytics" {
+				t.Errorf("%s: agent_id got %q", name, p.AgentID)
+			}
+		})
+	}
+}
+
+// F5: a proposal whose YAML patch invents a field (blocked_fingerprints) or uses
+// bare-string fingerprints must be REJECTED, not silently merged into a policy
+// that fails to enforce.
+func TestParseProposal_RejectsBadPatchSchema(t *testing.T) {
+	base := `{"schema":"faultwall.apa.proposal.v1","agent_id":"x","summary":"s s s","requires_human_review":true,`
+
+	bad := map[string]string{
+		// invented field — does not exist in AgentPolicy
+		"invented_blocked_fingerprints": base + `"proposed_policy_yaml_patch":"agents:\n  x:\n    blocked_fingerprints:\n      - deadbeef\n"}`,
+		// bare-string fingerprints instead of {hash,sql,seen,verdict} objects
+		"bare_string_fingerprints": base + `"proposed_policy_yaml_patch":"agents:\n  x:\n    allowed_fingerprints:\n      - deadbeef  # safe\n"}`,
+	}
+	for name, in := range bad {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseProposal(in); err == nil {
+				t.Fatalf("%s: expected rejection, got nil error", name)
+			}
+		})
+	}
+
+	// A well-formed patch (object fingerprints, known fields) must pass.
+	good := base + `"proposed_policy_yaml_patch":"agents:\n  x:\n    blocked_operations:\n      - DELETE\n    allowed_fingerprints:\n      - hash: \"deadbeef\"\n        sql: \"SELECT 1\"\n        seen: 5\n        verdict: allow\n"}`
+	if _, err := parseProposal(good); err != nil {
+		t.Fatalf("well-formed patch should pass, got %v", err)
+	}
+}

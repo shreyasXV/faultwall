@@ -148,3 +148,71 @@ func TestNoMission_GlobalBlocklistStillApplies(t *testing.T) {
 		t.Errorf("normal query must pass for no-mission agent, got %+v", v)
 	}
 }
+
+// F2 regression: mission allowed-tables wildcards must work.
+// Before the fix, isTableAllowed did exact-match only, so the "public.*"
+// entry that `faultwall init` generates matched nothing and locked an
+// identified agent out of every table (table_not_in_mission).
+func TestMissionWildcard_AllowsSchemaGlob(t *testing.T) {
+	pe := &PolicyEngine{
+		config: &PolicyConfig{
+			DefaultPolicy: "allow",
+			Agents: map[string]AgentPolicy{
+				"testagent": {
+					AuthToken: "tok",
+					Missions: map[string]MissionPolicy{
+						"read": {Tables: []string{"public.*", "analytics.*"}},
+					},
+				},
+			},
+			Unidentified: UnidentifiedPolicy{Policy: "deny"},
+		},
+		enforcement: "enforce",
+	}
+	id := &AgentIdentity{AgentID: "testagent", MissionID: "read", Token: "tok"}
+
+	for _, q := range []string{
+		"SELECT * FROM public.messages",
+		"SELECT * FROM public.users",
+		"SELECT * FROM analytics.events",
+	} {
+		if v := pe.CheckQuery(id, q, 0); v != nil && v.Reason == "table_not_in_mission" {
+			t.Errorf("wildcard public.*/analytics.* should allow %q, got block %+v", q, v)
+		}
+	}
+	// A table outside the allowed schemas must still be blocked.
+	if v := pe.CheckQuery(id, "SELECT * FROM secret.keys", 0); v == nil || v.Reason != "table_not_in_mission" {
+		t.Errorf("secret.keys is outside public.*/analytics.* — expected table_not_in_mission, got %+v", v)
+	}
+}
+
+// F2: bare "*" allows any table.
+func TestMissionWildcard_StarAllowsAll(t *testing.T) {
+	if !isTableAllowed("public.anything", []string{"*"}) {
+		t.Error(`bare "*" should allow any table`)
+	}
+	if !isTableAllowed("weird.schema.table", []string{"*"}) {
+		t.Error(`bare "*" should allow any table (multi-dot)`)
+	}
+}
+
+// F1 regression: an unidentified connection (no agent: identity) must be
+// denied when unidentified.policy == "deny" (the new secure-by-default).
+func TestUnidentified_DenyBlocksAnonymousRead(t *testing.T) {
+	pe := &PolicyEngine{
+		config: &PolicyConfig{
+			DefaultPolicy: "allow",
+			Agents:        map[string]AgentPolicy{},
+			Unidentified:  UnidentifiedPolicy{Policy: "deny"},
+		},
+		enforcement: "enforce",
+	}
+	// identity == nil simulates a connection with no agent: prefix.
+	v := pe.CheckQuery(nil, "SELECT id, name FROM public.users", 0)
+	if v == nil {
+		t.Fatal("unidentified connection under policy=deny must be blocked")
+	}
+	if v.Reason != "unidentified_connection" {
+		t.Errorf("expected reason=unidentified_connection, got %q", v.Reason)
+	}
+}

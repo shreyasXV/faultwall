@@ -140,6 +140,21 @@ func handleViolations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleQWMFlags returns recent QWM shadow-mode risk flags, newest first,
+// optionally filtered by agent. Observe-only telemetry (F11): these queries
+// were scored above the QWM flag threshold but were NOT blocked by QWM.
+// GET /api/qwm/flags
+// GET /api/qwm/flags?agent=cursor-ai
+func handleQWMFlags(w http.ResponseWriter, r *http.Request) {
+	flags := GetQWMFlags(r.URL.Query().Get("agent"))
+	writeJSON(w, map[string]interface{}{
+		"flags":     flags,
+		"count":     len(flags),
+		"threshold": qwmFlagThreshold,
+		"observe_only": true,
+	})
+}
+
 // handleAgentStats returns per-agent aggregated metrics
 // GET /api/agents/stats
 func handleAgentStats(w http.ResponseWriter, r *http.Request) {

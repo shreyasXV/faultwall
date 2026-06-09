@@ -907,6 +907,19 @@
     </div>
   </div>
 
+  <!-- QWM Risk Flags (observe-only) -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">⚡ QWM Risk Flags</span>
+      <span class="card-subtitle" id="qwm-flag-count">—</span>
+      <span class="card-subtitle" style="margin-left:8px; color:var(--muted);">observe-only — these queries were scored risky but NOT blocked</span>
+      <input type="text" id="qwm-filter" placeholder="Filter by agent…" style="margin-left:auto; padding:4px 8px; font-size:11px; background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--fg); width:180px;">
+    </div>
+    <div id="qwm-flag-list">
+      <div class="empty">No QWM flags yet. QWM scores queries in shadow mode; flags appear when a query exceeds the risk threshold.</div>
+    </div>
+  </div>
+
   <!-- Connected Agents -->
   <div class="card">
     <div class="card-header">
@@ -1116,6 +1129,7 @@
   <a href="/api/throttle/status" target="_blank">/throttle</a> ·
   <a href="/api/agents/status" target="_blank">/agents</a> ·
   <a href="/api/violations" target="_blank">/violations</a> ·
+  <a href="/api/qwm/flags" target="_blank">/qwm/flags</a> ·
   <a href="/api/policies" target="_blank">/policies</a> ·
   <a href="/api/firewall/agents" target="_blank">/firewall</a>
 </footer>
@@ -1918,6 +1932,7 @@ async function refresh() {
     refreshPredictions();
     refreshThrottle();
     refreshViolations();
+    refreshQWMFlags();
     refreshAgentStats();
     refreshAgentConnections();
 
@@ -1949,6 +1964,59 @@ async function refresh() {
     }
   }, 1000);
 }
+
+// ── QWM Risk Flags (F11, observe-only) ──────────────────────────────────
+let allQWMFlags = [];
+
+function renderQWMFlags(filter) {
+  const list = document.getElementById('qwm-flag-list');
+  if (!list) return;
+  const f = (filter || '').toLowerCase().trim();
+  const filtered = f ? allQWMFlags.filter(x => (x.agent || '').toLowerCase().includes(f)) : allQWMFlags;
+  if (filtered.length === 0) {
+    list.innerHTML = `<div class="empty">${f ? 'No QWM flags matching "' + escHtml(f) + '"' : 'No QWM flags yet. QWM scores queries in shadow mode; flags appear when a query exceeds the risk threshold.'}</div>`;
+    return;
+  }
+  const shown = filtered.slice(0, 50);
+  list.innerHTML = shown.map(x => {
+    const ts = x.timestamp ? timeAgo(x.timestamp) : '';
+    const score = (typeof x.score === 'number') ? x.score.toFixed(3) : '—';
+    const feats = (x.top_features || []).join(', ');
+    const tables = (x.tables || []).join(', ');
+    return `<div class="violation-item" style="border-left:3px solid var(--accent);">
+      <span class="violation-icon">⚡</span>
+      <div class="violation-body">
+        <div class="violation-msg">
+          <span class="violation-badge monitored">RISK ${escHtml(score)}</span>
+          Agent <strong>${escHtml(x.agent || '—')}</strong>
+          ${x.operation ? ' [' + escHtml(x.operation) + ']' : ''}
+          ${tables ? ' (tables: ' + escHtml(tables) + ')' : ''}
+        </div>
+        <div class="violation-query" title="${escHtml(x.query)}">${escHtml(x.query)}</div>
+        <div class="violation-meta">${feats ? 'top features: ' + escHtml(feats) + ' · ' : ''}${ts}</div>
+      </div>
+    </div>`;
+  }).join('') + (filtered.length > 50 ? `<div class="empty">Showing 50 of ${filtered.length}</div>` : '');
+}
+
+async function refreshQWMFlags() {
+  try {
+    const data = await fetchJSON('/api/qwm/flags');
+    allQWMFlags = data.flags || [];
+    const countEl = document.getElementById('qwm-flag-count');
+    if (countEl) countEl.textContent = allQWMFlags.length > 0 ? allQWMFlags.length + ' flagged' : 'None';
+    const fe = document.getElementById('qwm-filter');
+    renderQWMFlags(fe ? fe.value : '');
+  } catch(e) {
+    const list = document.getElementById('qwm-flag-list');
+    if (list) list.innerHTML = '<div class="empty">QWM flags endpoint unavailable</div>';
+  }
+}
+
+(function(){
+  const fe = document.getElementById('qwm-filter');
+  if (fe) fe.addEventListener('input', function(){ renderQWMFlags(this.value); });
+})();
 
 // Sparklines on separate interval (every 30s)
 setInterval(refreshSparklines, 30000);

@@ -953,13 +953,25 @@ func TestUnidentifiedSafeQueryMonitored(t *testing.T) {
 		},
 	})
 
-	// A safe query from unidentified should still get the generic monitor log
-	v := pe.CheckQuery(nil, "SELECT 1", 1)
-	if v == nil {
-		t.Fatal("expected monitor violation for unidentified connection")
+	// In "monitor" mode the engine only surfaces *actual* violations (blocked
+	// table/function); a safe query produces no violation (logged passively,
+	// not enforced). Use "log" mode if you want a record of every unidentified
+	// query. This documents the monitor-vs-log distinction in policy.go.
+	if v := pe.CheckQuery(nil, "SELECT 1", 1); v != nil {
+		t.Errorf("monitor mode + safe query should not produce a violation, got %+v", v)
 	}
-	if v.Reason != "unidentified_connection_monitored" {
-		t.Errorf("expected generic monitor reason, got %q", v.Reason)
+
+	// "log" mode, by contrast, records every unidentified query.
+	peLog := newTestEngine(&PolicyConfig{
+		DefaultPolicy: "deny",
+		Unidentified:  UnidentifiedPolicy{Policy: "log"},
+	})
+	v := peLog.CheckQuery(nil, "SELECT 1", 1)
+	if v == nil {
+		t.Fatal("log mode should record every unidentified connection")
+	}
+	if v.Reason != "unidentified_connection_logged" {
+		t.Errorf("expected reason unidentified_connection_logged, got %q", v.Reason)
 	}
 }
 
