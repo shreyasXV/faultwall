@@ -30,6 +30,7 @@ var (
 	policyEngine     *PolicyEngine
 	observationStore   *ObservationStore
 	qwmScorer          QWMScorer
+	qwmStateSampler    *StateSampler
 	qwmFlagThreshold   = 0.7 // shadow mode: flag but never block
 )
 
@@ -130,7 +131,35 @@ func main() {
 		policyEngine = NewPolicyEngine()
 		agentTracker = NewAgentTracker()
 		observationStore = NewObservationStore(os.Getenv("OBSERVATION_PATH"))
-		qwmScorer = NewShadowQWMScorer()
+
+		// QWM: RFC-003 state-conditioned world model. Loads an optional trained
+		// artifact (FW_QWM_MODEL or ~/.faultwall/qwm_world_model.json); otherwise
+		// uses cold-start defaults. Falls back to the shape-based shadow scorer for
+		// fingerprints with no learned base service, so we never regress.
+		shapeFallback := NewShadowQWMScorer()
+		wmArtifact := loadWorldModelArtifact()
+		qwmScorer = NewWorldModelScorer(wmArtifact, shapeFallback)
+
+		// Live DB-state sampler (~1s) feeding the world model. Uses DATABASE_URL
+		// or a monitoring DSN derived from the upstream; degrades to queuing-prior
+		// only if no monitoring connection is available.
+		if dsn, ok := monitoringDSNFromUpstream(proxyUpstream); ok {
+			if mdb, err := openMonitoringDB(dsn); err == nil {
+				if perr := mdb.Ping(); perr == nil {
+					cores := qwmConfiguredCores()
+					qwmStateSampler = NewStateSampler(mdb, cores, time.Second)
+					qwmStateSampler.Start()
+					log.Printf("⚡ QWM world model active (SLO %.0fms, %.0f core(s)) — live state sampling on", wmArtifact.SLOms, cores)
+				} else {
+					mdb.Close()
+					log.Printf("⚡ QWM world model active (queuing prior only) — monitoring DB ping failed: %v", perr)
+				}
+			} else {
+				log.Printf("⚡ QWM world model active (queuing prior only) — monitoring DB open failed: %v", err)
+			}
+		} else {
+			log.Printf("⚡ QWM world model active (queuing prior only) — no monitoring DSN")
+		}
 		go func() {
 			ticker := time.NewTicker(60 * time.Second)
 			defer ticker.Stop()
