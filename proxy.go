@@ -390,6 +390,12 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 	// Per-query stats tracking
 	var queryStartTime time.Time
 	queryRowCount := 0
+	// inFlightFingerprint carries the fingerprint of the currently-executing
+	// query from the request goroutine to the response goroutine so the QWM world
+	// model can record the query's measured latency against its fingerprint when
+	// ReadyForQuery ('Z') arrives. Same shared-closure pattern as queryStartTime.
+	var inFlightFingerprint string
+	var inFlightUnderLoad float64
 
 	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
@@ -436,6 +442,13 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					agentTracker.RecordRows(identity.AgentID, int64(queryRowCount))
 					agentTracker.RecordDuration(identity.AgentID, durationMs)
 				}
+				// RFC-003: feed the measured latency to the QWM world model's
+				// per-fingerprint base-service EWMA (only learns under low load).
+				if !queryStartTime.IsZero() && inFlightFingerprint != "" {
+					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
+					recordQueryLatency(inFlightFingerprint, durationMs, inFlightUnderLoad)
+				}
+				inFlightFingerprint = ""
 				queryRowCount = 0
 				queryStartTime = time.Time{}
 
@@ -499,6 +512,12 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			} else {
 				logAllowed(agentLabel, query)
 				scoreQueryShadow(agentLabel, query, pq)
+				// RFC-003: remember this fingerprint + the load it ran under so the
+				// response goroutine can record its latency into the base-service EWMA.
+				if pq != nil {
+					inFlightFingerprint = pq.Fingerprint
+					inFlightUnderLoad = currentUtilization()
+				}
 				emitTelemetryFor("allowed", "allow", nil, pq, decisionLatencyMs)
 			}
 			recordObservation(agentLabel, identity, query, pq, false)
@@ -871,26 +890,57 @@ func logMonitored(agent, query string, v *PolicyViolation) {
 
 // scoreQueryShadow runs the QWM scorer in shadow mode (observe-only, never blocks).
 // pq is the already-parsed query from safeCheckQuery — no second CGO call.
+//
+// RFC-003: infra is now the LIVE DB-state snapshot from the StateSampler (not the
+// old QWMInfraState{} stub), so the world-model scorer is state-conditioned.
 func scoreQueryShadow(agentLabel, query string, pq *ParsedQuery) {
 	if qwmScorer == nil || pq == nil {
 		return
 	}
-	infra := QWMInfraState{} // TODO: populate from collector once integrated
+	infra := currentInfraState()
 	score := qwmScorer.Score(pq, infra)
 	if score > qwmFlagThreshold {
 		top := qwmScorer.TopFeatures(pq, infra, 3)
 		logQWMFlag(agentLabel, query, score, top)
-		// F11: persist the flag so the dashboard can show it (observe-only;
-		// this does not affect the allow/block decision).
-		recordQWMFlag(QWMFlagRecord{
+
+		// RFC-003: enrich the flag with world-model predictions when available.
+		rec := QWMFlagRecord{
 			Agent:       agentLabel,
 			Query:       querySnippet(query),
 			Score:       score,
 			TopFeatures: top,
 			Operation:   pq.Operation,
 			Tables:      pq.Tables,
+			Utilization: infra.Utilization,
 			Timestamp:   time.Now(),
-		})
+		}
+		if wm, ok := qwmScorer.(*worldModelScorer); ok {
+			if predicted, pBreach, used := wm.Predict(pq, infra); used {
+				rec.PredictedMs = predicted
+				rec.PBreach = pBreach
+			}
+		}
+		recordQWMFlag(rec)
+	}
+}
+
+// currentInfraState returns the live DB-state snapshot for the world model, or a
+// zero state (→ queuing-prior/fallback path) when no sampler is running.
+func currentInfraState() QWMInfraState {
+	if qwmStateSampler != nil {
+		return qwmStateSampler.Snapshot()
+	}
+	return QWMInfraState{}
+}
+
+// currentUtilization is a hot-path-cheap read of the cached utilization.
+func currentUtilization() float64 { return currentInfraState().Utilization }
+
+// recordQueryLatency feeds a measured query latency into the world model's
+// per-fingerprint base-service EWMA. No-op unless the world-model scorer is active.
+func recordQueryLatency(fingerprint string, latencyMs, utilization float64) {
+	if wm, ok := qwmScorer.(*worldModelScorer); ok {
+		wm.Observe(fingerprint, latencyMs, utilization)
 	}
 }
 

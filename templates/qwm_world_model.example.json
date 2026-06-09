@@ -1,0 +1,15 @@
+{
+  "schema": "faultwall.qwm.worldmodel.v1",
+  "slo_ms": 8000,
+  "p_threshold": 0.5,
+  "platt": { "a": 5.32, "b": 1.72 },
+  "servers": 1.0,
+  "low_util": 0.35,
+  "base_ms_by_fp": {},
+  "meta": {
+    "trained_at": "",
+    "dataset_rows": 0,
+    "git_sha": "",
+    "note": "Cold-start defaults. base_ms_by_fp is an optional seed; the proxy refines per-fingerprint base service live via EWMA (only updating when utilization < low_util). a/b are Platt coefficients for P_breach = sigmoid(a*ln(predicted_ms/slo_ms)+b)."
+  }
+}

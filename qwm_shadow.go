@@ -26,6 +26,17 @@ type QWMInfraState struct {
 	BaselineQueryTimeMs float64
 	LockContentionMs    float64
 	AnomalyRateAgent    float64
+
+	// ── RFC-003 world-model state (live DB state s_t) ──
+	// Populated by the StateSampler goroutine (qwm_state.go) from
+	// pg_stat_activity, refreshed ~1s. Zero values mean "unknown" → the world
+	// model falls back to its queuing prior / cold-start path.
+	ActiveBackends  int     // non-idle backends running queries
+	BlockedBackends int     // backends waiting on a lock
+	LongestActiveMs float64 // age of the longest-running active query
+	CacheHitRatio   float64 // shared-buffer cache hit ratio [0,1]
+	TPS             float64 // transactions/sec (xact_commit+rollback delta)
+	Utilization     float64 // ρ proxy: max(active_backends, cpu)/cores, [0,~)
 }
 
 // shadowQWMScorer is the built-in logistic regression scorer used in shadow mode.
@@ -238,6 +249,12 @@ type QWMFlagRecord struct {
 	Operation   string    `json:"operation"`
 	Tables      []string  `json:"tables,omitempty"`
 	Timestamp   time.Time `json:"timestamp"`
+
+	// RFC-003 world-model fields (zero when the world model has no base for the
+	// fingerprint yet — i.e. the shape-based fallback produced the score).
+	PredictedMs float64 `json:"predicted_ms,omitempty"`
+	PBreach     float64 `json:"p_breach,omitempty"`
+	Utilization float64 `json:"utilization,omitempty"`
 }
 
 const qwmFlagRingSize = 500
