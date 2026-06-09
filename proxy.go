@@ -880,6 +880,17 @@ func scoreQueryShadow(agentLabel, query string, pq *ParsedQuery) {
 	if score > qwmFlagThreshold {
 		top := qwmScorer.TopFeatures(pq, infra, 3)
 		logQWMFlag(agentLabel, query, score, top)
+		// F11: persist the flag so the dashboard can show it (observe-only;
+		// this does not affect the allow/block decision).
+		recordQWMFlag(QWMFlagRecord{
+			Agent:       agentLabel,
+			Query:       querySnippet(query),
+			Score:       score,
+			TopFeatures: top,
+			Operation:   pq.Operation,
+			Tables:      pq.Tables,
+			Timestamp:   time.Now(),
+		})
 	}
 }
 

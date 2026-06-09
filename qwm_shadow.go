@@ -222,3 +222,51 @@ func logQWMFlag(agent, query string, score float64, topFeatures []string) {
 	log.Printf("%s%s[QWM-FLAG]%s agent=%-20s score=%.3f features=%v query=%s",
 		colorYellow, colorBold, colorReset, agent, score, topFeatures, querySnippet(query))
 }
+
+// ── F11: QWM flag store ──
+// Flags were previously log-only, so a client asking "show me what QWM caught"
+// had nothing to look at. We keep a bounded in-memory ring of recent flags that
+// the local dashboard (GET /api/qwm/flags) can render. Mirrors the
+// PolicyEngine.violations pattern (bounded, mutex-guarded).
+
+// QWMFlagRecord is one shadow-mode flag surfaced to the dashboard.
+type QWMFlagRecord struct {
+	Agent       string    `json:"agent"`
+	Query       string    `json:"query"`
+	Score       float64   `json:"score"`
+	TopFeatures []string  `json:"top_features"`
+	Operation   string    `json:"operation"`
+	Tables      []string  `json:"tables,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+}
+
+const qwmFlagRingSize = 500
+
+var (
+	qwmFlagsMu sync.RWMutex
+	qwmFlags   []QWMFlagRecord
+)
+
+// recordQWMFlag appends a flag to the bounded ring. Safe for concurrent use.
+func recordQWMFlag(rec QWMFlagRecord) {
+	qwmFlagsMu.Lock()
+	defer qwmFlagsMu.Unlock()
+	qwmFlags = append(qwmFlags, rec)
+	if len(qwmFlags) > qwmFlagRingSize {
+		qwmFlags = qwmFlags[len(qwmFlags)-qwmFlagRingSize:]
+	}
+}
+
+// GetQWMFlags returns recorded flags newest-first, optionally filtered by agent.
+func GetQWMFlags(agentFilter string) []QWMFlagRecord {
+	qwmFlagsMu.RLock()
+	defer qwmFlagsMu.RUnlock()
+	out := make([]QWMFlagRecord, 0, len(qwmFlags))
+	for i := len(qwmFlags) - 1; i >= 0; i-- {
+		if agentFilter != "" && qwmFlags[i].Agent != agentFilter {
+			continue
+		}
+		out = append(out, qwmFlags[i])
+	}
+	return out
+}
