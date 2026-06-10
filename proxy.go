@@ -232,10 +232,17 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		return
 	}
 
-	// 5. Relay auth handshake until ReadyForQuery ('Z')
-	if err := relayAuth(client, upstream); err != nil {
+	// 5. Relay auth handshake until ReadyForQuery ('Z'). Capture the
+	// upstream backend PID (from BackendKeyData) so REAL-F9 can tell
+	// proxy-originated sessions from direct-to-DB bypasses.
+	upstreamPID, err := relayAuth(client, upstream)
+	if err != nil {
 		log.Printf("Proxy: auth relay failed for agent=%s: %v", agentLabel, err)
 		return
+	}
+	if upstreamPID > 0 {
+		proxyBackendRegistry.Register(upstreamPID)
+		defer proxyBackendRegistry.Deregister(upstreamPID)
 	}
 
 	// 6. Main proxy loop
@@ -299,25 +306,33 @@ func indexOf(b []byte, v byte) int {
 	return -1
 }
 
-// relayAuth relays messages between client and upstream during auth handshake.
-func relayAuth(client, upstream net.Conn) error {
+// relayAuth relays messages between client and upstream during auth
+// handshake. Returns the upstream backend PID parsed from BackendKeyData
+// ('K'), or 0 if not seen — used by REAL-F9 bypass detection to track
+// which sessions the proxy has originated.
+func relayAuth(client, upstream net.Conn) (int, error) {
+	upstreamPID := 0
 	for {
 		// Read message from upstream (server)
 		msgType, payload, err := readWireMessage(upstream)
 		if err != nil {
-			return fmt.Errorf("reading upstream auth message: %w", err)
+			return upstreamPID, fmt.Errorf("reading upstream auth message: %w", err)
 		}
 
 		// Forward to client
 		if err := writeWireMessage(client, msgType, payload); err != nil {
-			return fmt.Errorf("forwarding auth to client: %w", err)
+			return upstreamPID, fmt.Errorf("forwarding auth to client: %w", err)
 		}
 
 		switch msgType {
+		case 'K': // BackendKeyData — first 4 bytes are the upstream PID.
+			if len(payload) >= 4 {
+				upstreamPID = int(binary.BigEndian.Uint32(payload[:4]))
+			}
 		case 'Z': // ReadyForQuery — auth complete
-			return nil
+			return upstreamPID, nil
 		case 'E': // ErrorResponse from upstream
-			return fmt.Errorf("upstream rejected connection")
+			return upstreamPID, fmt.Errorf("upstream rejected connection")
 		case 'R': // Authentication message
 			if len(payload) >= 4 {
 				authType := binary.BigEndian.Uint32(payload[:4])
@@ -326,15 +341,15 @@ func relayAuth(client, upstream net.Conn) error {
 				if authType != 0 && authType != 12 {
 					cType, cPayload, cErr := readWireMessage(client)
 					if cErr != nil {
-						return fmt.Errorf("reading client auth response: %w", cErr)
+						return upstreamPID, fmt.Errorf("reading client auth response: %w", cErr)
 					}
 					if wErr := writeWireMessage(upstream, cType, cPayload); wErr != nil {
-						return fmt.Errorf("forwarding client auth to upstream: %w", wErr)
+						return upstreamPID, fmt.Errorf("forwarding client auth to upstream: %w", wErr)
 					}
 				}
 			}
 		}
-		// ParameterStatus ('S'), BackendKeyData ('K'), etc. — already forwarded
+		// ParameterStatus ('S'), etc. — already forwarded
 	}
 }
 
