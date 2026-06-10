@@ -181,6 +181,16 @@ func main() {
 			log.Printf("📡 Control-plane telemetry enabled → %s (metadata only)", cpCfg.URL)
 		}
 
+		// Self-disabling feature guards (see guards.go). Each guard runs a
+		// startup self-check; if the check fails, the new behavior turns
+		// itself off and the proxy falls back to the prior safe path. We
+		// run these BEFORE starting the proxy so the gates are settled
+		// before any connection is accepted.
+		InitUnqualifiedAllowGuard()                    // F2
+		LogIdentitySpoofWarning(policyEngine.GetConfig()) // F3 (always)
+		InitRequireAuthTokenGuard()                    // F3 (optional enforce)
+		RunDBIsolationProbe(proxyUpstream)             // F9
+
 		// Start proxy in a goroutine so we can also run the API server
 		go runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey, upstreamTLS, upstreamTLSSkipVerify)
 

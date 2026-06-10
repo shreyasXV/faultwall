@@ -194,13 +194,26 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	if identity != nil {
 		cfg := pe.GetConfig()
 		if cfg != nil {
-			if ap, ok := cfg.Agents[identity.AgentID]; ok && ap.AuthToken != "" {
-				if identity.Token == "" || identity.Token != ap.AuthToken {
+			ap, ok := cfg.Agents[identity.AgentID]
+			agentHasToken := ok && ap.AuthToken != ""
+			tokensMatch := agentHasToken && identity.Token == ap.AuthToken
+			if agentHasToken {
+				if identity.Token == "" || !tokensMatch {
 					log.Printf("%s%s[BLOCKED]%s auth token mismatch for agent=%s",
 						colorRed, colorBold, colorReset, agentLabel)
 					sendStartupError(client, "auth token mismatch for agent: "+identity.AgentID)
 					return
 				}
+			}
+			// F3 enforcement: when the require_auth_token guard is on
+			// (and the self-check confirmed it works), an agent that
+			// presents an identity with no verified token is rejected
+			// fail-safe closed. Disabled by default; warn-only otherwise.
+			if requireAuthTokenEnforce(identity, agentHasToken, tokensMatch) {
+				log.Printf("%s%s[BLOCKED]%s require_auth_token=true: agent=%s has no verified auth_token",
+					colorRed, colorBold, colorReset, agentLabel)
+				sendStartupError(client, "require_auth_token=true: agent has no verified auth_token: "+identity.AgentID)
+				return
 			}
 		}
 	}

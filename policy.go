@@ -1369,8 +1369,34 @@ func isAnyTableReferenced(target string, referenced []string) bool {
 //   - Exact match: "public.users" == "public.users"
 //   - Wildcard prefix: "public.*" matches "public.messages"; bare "*" matches all
 //   - Schema-agnostic bare-name match: allow "users" matches "public.users"
+//
+// F2 fix: when the F2 guard is on (see guards.go), an unqualified table
+// reference is also normalized to the default schema (e.g. "feedback"
+// → "public.feedback") for ALLOW matching only. The pre-fix behavior is
+// preserved when the guard is off, so a self-check failure cleanly falls
+// back to the stricter (and historically-shipped) ALLOW path.
+//
+// This function only ever LOOSENS the allow path; it must never tighten it
+// in a way that would let a previously-blocked query through. The BLOCK
+// path (isTableBlocked) is unchanged.
 func isTableAllowed(table string, allowedList []string) bool {
+	return isTableAllowedWithNormalization(table, allowedList, IsUnqualifiedAllowNormalizationOn())
+}
+
+// isTableAllowedWithNormalization is the implementation of isTableAllowed
+// parameterized on whether the F2 normalization is on. It is called both
+// by isTableAllowed (using the live gate) and by the F2 self-check (which
+// passes normalize=true to verify the candidate behavior in isolation).
+func isTableAllowedWithNormalization(table string, allowedList []string, normalize bool) bool {
 	tableLower := strings.ToLower(table)
+	// F2: synthesize a schema-qualified candidate ("feedback" →
+	// "public.feedback") that the existing wildcard / exact-match branches
+	// can compare against. Only used when the table is unqualified; we
+	// never strip a schema the caller already supplied.
+	tableQualified := ""
+	if normalize && !strings.Contains(tableLower, ".") {
+		tableQualified = defaultSchemaForAllowMatch + "." + tableLower
+	}
 	for _, allowed := range allowedList {
 		// Mission tables use format "schema.table: [ops]" or just "schema.table"
 		allowedClean := strings.Split(allowed, ":")[0]
@@ -1385,9 +1411,15 @@ func isTableAllowed(table string, allowedList []string) bool {
 			if strings.HasPrefix(tableLower, prefix) {
 				return true
 			}
+			if tableQualified != "" && strings.HasPrefix(tableQualified, prefix) {
+				return true
+			}
 			continue
 		}
 		if tableLower == allowedClean {
+			return true
+		}
+		if tableQualified != "" && tableQualified == allowedClean {
 			return true
 		}
 		// Also match without schema prefix
