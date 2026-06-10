@@ -186,10 +186,11 @@ func main() {
 		// itself off and the proxy falls back to the prior safe path. We
 		// run these BEFORE starting the proxy so the gates are settled
 		// before any connection is accepted.
-		InitUnqualifiedAllowGuard()                    // F2
+		InitUnqualifiedAllowGuard()                       // F2 (shipped: public-only)
+		InitSearchPathAwareAllowGuard()                   // REAL-F2 (per-connection search_path)
 		LogIdentitySpoofWarning(policyEngine.GetConfig()) // F3 (always)
-		InitRequireAuthTokenGuard()                    // F3 (optional enforce)
-		RunDBIsolationProbe(proxyUpstream)             // F9
+		InitRequireAuthTokenGuard()                       // F3 (optional enforce)
+		RunDBIsolationProbe(proxyUpstream)                // F9 (shipped: TCP probe)
 
 		// Start proxy in a goroutine so we can also run the API server
 		go runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey, upstreamTLS, upstreamTLSSkipVerify)

@@ -381,6 +381,13 @@ func writeWireMessage(w io.Writer, msgType byte, payload []byte) error {
 func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLabel string, pe *PolicyEngine) {
 	var clientWriteMu sync.Mutex
 
+	// REAL-F2: per-connection search_path. proxyQueryLoop is one goroutine
+	// per client connection — the right scope. We watch every Q/Parse for a
+	// `SET search_path …` (or RESET) and update this state. The policy
+	// check then sees the agent's actual current search_path, not the
+	// hard-coded "public" assumption from the shipped F2.
+	searchPath := NewSearchPathState()
+
 	// Row limit enforcement state
 	maxRows := pe.GetMaxRows(identity)
 	maxQueryTimeMs := pe.GetMaxQueryTimeMs(identity)
@@ -496,8 +503,16 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		// Simple query protocol: type 'Q'
 		if msgType == 'Q' && len(payload) > 1 {
 			query := string(payload[:len(payload)-1])
+			// REAL-F2: track per-connection search_path BEFORE the policy
+			// check. A `SET search_path …` is a no-op for tables/functions
+			// blocking but updates the state used to resolve unqualified
+			// names in subsequent queries.
+			if IsSearchPathStatement(query) {
+				searchPath.ApplySearchPathStatement(query)
+			}
+			ctx := &QueryContext{SearchPath: searchPath.Schemas()}
 			decisionStart := time.Now()
-			violation, pq := safeCheckQuery(pe, identity, query)
+			violation, pq := safeCheckQueryWithContext(pe, identity, query, ctx)
 			decisionLatencyMs := float64(time.Since(decisionStart).Microseconds()) / 1000.0
 
 			// Track this query in the agent tracker
@@ -542,8 +557,12 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			stmtName, query := extractParseMessage(payload)
 
 			if query != "" {
+				if IsSearchPathStatement(query) {
+					searchPath.ApplySearchPathStatement(query)
+				}
+				ctx := &QueryContext{SearchPath: searchPath.Schemas()}
 				decisionStart := time.Now()
-				violation, pq := safeCheckQuery(pe, identity, query)
+				violation, pq := safeCheckQueryWithContext(pe, identity, query, ctx)
 				decisionLatencyMs := float64(time.Since(decisionStart).Microseconds()) / 1000.0
 
 				// Track this query in the agent tracker
@@ -826,6 +845,13 @@ func sendStartupError(client net.Conn, msg string) {
 // panic recovery (fail-open). Returns both the violation and the *ParsedQuery
 // so callers can reuse the parsed result without a second CGO round-trip.
 func safeCheckQuery(pe *PolicyEngine, identity *AgentIdentity, query string) (violation *PolicyViolation, parsed *ParsedQuery) {
+	return safeCheckQueryWithContext(pe, identity, query, nil)
+}
+
+// safeCheckQueryWithContext is safeCheckQuery with a per-connection
+// QueryContext (currently the search_path snapshot). The proxy hot path
+// uses this; other callers can pass nil.
+func safeCheckQueryWithContext(pe *PolicyEngine, identity *AgentIdentity, query string, ctx *QueryContext) (violation *PolicyViolation, parsed *ParsedQuery) {
 	parsed = ParseQuery(query)
 	defer func() {
 		if r := recover(); r != nil {
@@ -833,7 +859,7 @@ func safeCheckQuery(pe *PolicyEngine, identity *AgentIdentity, query string) (vi
 			violation = nil
 		}
 	}()
-	violation = pe.CheckQueryWithParsed(identity, parsed, query, 0)
+	violation = pe.CheckQueryWithContext(identity, parsed, query, 0, ctx)
 	return
 }
 

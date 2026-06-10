@@ -498,18 +498,48 @@ func checkConditions(conditions []string, operation string, query string, identi
 	return nil
 }
 
+// QueryContext carries per-connection state into a CheckQuery call.
+//
+// SearchPath, when non-nil, is the ordered list of schemas the agent has
+// most recently set on this connection (see searchpath.go). It is used by
+// the REAL-F2 path to (a) resolve unqualified ALLOW matches against the
+// agent's actual search_path and (b) catch unqualified BLOCKED matches
+// across every schema the agent could resolve into. nil/empty is
+// equivalent to the pre-REAL-F2 behavior.
+type QueryContext struct {
+	SearchPath []string
+}
+
 // CheckQuery evaluates a query against the loaded policies.
 // Returns nil if allowed, a PolicyViolation if blocked/flagged.
 // CheckQuery parses query and evaluates it against the policy.
 // If the caller already has a *ParsedQuery (e.g. from a prior parse on the same
 // query), use CheckQueryWithParsed to avoid the extra CGO round-trip.
 func (pe *PolicyEngine) CheckQuery(identity *AgentIdentity, query string, pid int) *PolicyViolation {
-	return pe.CheckQueryWithParsed(identity, ParseQuery(query), query, pid)
+	return pe.CheckQueryWithContext(identity, ParseQuery(query), query, pid, nil)
 }
 
 // CheckQueryWithParsed is CheckQuery with a pre-parsed *ParsedQuery.
 // parsed.Fingerprint must already be set (ParseQuery sets it automatically).
 func (pe *PolicyEngine) CheckQueryWithParsed(identity *AgentIdentity, parsed *ParsedQuery, query string, pid int) *PolicyViolation {
+	return pe.CheckQueryWithContext(identity, parsed, query, pid, nil)
+}
+
+// CheckQueryWithContext is the search-path-aware variant of
+// CheckQueryWithParsed. ctx may be nil (equivalent to no per-connection
+// state). The schema-context is consulted by isTableAllowedWithContext /
+// isTableBlockedWithContext only when the REAL-F2 guard
+// (IsSearchPathAwareAllowOn) is engaged, so a nil ctx or a disabled gate
+// preserves the shipped behavior.
+func (pe *PolicyEngine) CheckQueryWithContext(identity *AgentIdentity, parsed *ParsedQuery, query string, pid int, ctx *QueryContext) *PolicyViolation {
+	var searchPath []string
+	if ctx != nil {
+		searchPath = ctx.SearchPath
+	}
+	return pe.checkQueryImpl(identity, parsed, query, pid, searchPath)
+}
+
+func (pe *PolicyEngine) checkQueryImpl(identity *AgentIdentity, parsed *ParsedQuery, query string, pid int, searchPath []string) *PolicyViolation {
 	pe.mu.RLock()
 	cfg := pe.config
 	pe.mu.RUnlock()
@@ -652,7 +682,7 @@ func (pe *PolicyEngine) CheckQueryWithParsed(identity *AgentIdentity, parsed *Pa
 
 		// Check blocked tables for unidentified connections
 		for _, table := range tables {
-			if isTableBlocked(table, cfg.Unidentified.BlockedTables) {
+			if isTableBlockedWithContext(table, cfg.Unidentified.BlockedTables, searchPath) {
 				return &PolicyViolation{
 					AgentID:   "unidentified",
 					Query:     truncateQuery(query),
@@ -798,7 +828,7 @@ func (pe *PolicyEngine) CheckQueryWithParsed(identity *AgentIdentity, parsed *Pa
 
 	// Check blocked tables (global for agent — applies regardless of profile)
 	for _, table := range tables {
-		if isTableBlocked(table, agentPolicy.BlockedTables) {
+		if isTableBlockedWithContext(table, agentPolicy.BlockedTables, searchPath) {
 			return &PolicyViolation{
 				AgentID:   identity.AgentID,
 				MissionID: identity.MissionID,
@@ -894,7 +924,7 @@ func (pe *PolicyEngine) CheckQueryWithParsed(identity *AgentIdentity, parsed *Pa
 			// Check tables against mission allowed list
 			if len(missionPolicy.Tables) > 0 {
 				for _, table := range tables {
-					if !isTableAllowed(table, missionPolicy.Tables) {
+					if !isTableAllowedWithContext(table, missionPolicy.Tables, IsUnqualifiedAllowNormalizationOn(), searchPath) {
 						return &PolicyViolation{
 							AgentID:   identity.AgentID,
 							MissionID: identity.MissionID,
@@ -1388,42 +1418,122 @@ func isTableAllowed(table string, allowedList []string) bool {
 // by isTableAllowed (using the live gate) and by the F2 self-check (which
 // passes normalize=true to verify the candidate behavior in isolation).
 func isTableAllowedWithNormalization(table string, allowedList []string, normalize bool) bool {
+	return isTableAllowedWithContext(table, allowedList, normalize, nil)
+}
+
+// isTableAllowedWithContext is the search-path-aware ALLOW matcher. The
+// `searchPath` parameter is the connection's current SET search_path, in
+// order, lowercased. When non-empty AND the REAL-F2 guard is on, an
+// unqualified table reference is tried against EACH schema in the path:
+// for each `<schema>.<table>` candidate, the function returns true on the
+// first allow match. If `searchPath` is nil/empty (or REAL-F2 is off), the
+// function falls back to the shipped public-only normalization controlled
+// by `normalize` (which mirrors `IsUnqualifiedAllowNormalizationOn()`).
+//
+// `$user` entries in the search_path are skipped because we cannot
+// expand them without querying current_user; matching falls through to
+// remaining entries.
+//
+// LOOSENS the allow path only (never tightens). The BLOCK path is the
+// concern of isTableBlockedWithContext, which is structurally separate
+// and never relies on this function.
+func isTableAllowedWithContext(table string, allowedList []string, normalize bool, searchPath []string) bool {
 	tableLower := strings.ToLower(table)
-	// F2: synthesize a schema-qualified candidate ("feedback" →
-	// "public.feedback") that the existing wildcard / exact-match branches
-	// can compare against. Only used when the table is unqualified; we
-	// never strip a schema the caller already supplied.
-	tableQualified := ""
-	if normalize && !strings.Contains(tableLower, ".") {
-		tableQualified = defaultSchemaForAllowMatch + "." + tableLower
+	unqualified := !strings.Contains(tableLower, ".")
+
+	// Build the set of qualified candidates to try against the allow list.
+	// Always include the bare lowercase name itself (preserves the
+	// schema-agnostic branch for explicit "users" allow entries).
+	candidates := []string{tableLower}
+
+	if unqualified {
+		realF2 := IsSearchPathAwareAllowOn() && len(searchPath) > 0
+		if realF2 {
+			// REAL-F2: use the connection's actual search_path
+			// EXCLUSIVELY for unqualified ALLOW resolution. We do NOT
+			// also fall through to the static default schema — that
+			// would over-allow (e.g. mission=[public.*], agent did
+			// `SET search_path TO myschema`, query `feedback` would
+			// otherwise wrongly match public.feedback even though
+			// Postgres will resolve to myschema.feedback). The
+			// search_path slice is what the agent actually told the
+			// server.
+			for _, sc := range searchPath {
+				sc = strings.ToLower(strings.TrimSpace(sc))
+				if sc == "" || sc == "$user" {
+					// Cannot resolve $user without querying the DB; skip
+					// it and fall through to the next entry, as Postgres
+					// effectively does when no role-named schema exists.
+					continue
+				}
+				candidates = append(candidates, sc+"."+tableLower)
+			}
+		} else if normalize {
+			// Shipped F2 (no search_path context): assume Postgres'
+			// factory default — `public` first.
+			candidates = append(candidates, defaultSchemaForAllowMatch+"."+tableLower)
+		}
 	}
+
 	for _, allowed := range allowedList {
 		// Mission tables use format "schema.table: [ops]" or just "schema.table"
 		allowedClean := strings.Split(allowed, ":")[0]
 		allowedClean = strings.TrimSpace(strings.ToLower(allowedClean))
-		// Bare "*" allows any table.
 		if allowedClean == "*" {
 			return true
 		}
-		// Wildcard prefix: "public.*" matches any "public.<t>".
 		if strings.HasSuffix(allowedClean, ".*") {
 			prefix := strings.TrimSuffix(allowedClean, "*")
-			if strings.HasPrefix(tableLower, prefix) {
-				return true
-			}
-			if tableQualified != "" && strings.HasPrefix(tableQualified, prefix) {
-				return true
+			for _, c := range candidates {
+				if strings.HasPrefix(c, prefix) {
+					return true
+				}
 			}
 			continue
 		}
-		if tableLower == allowedClean {
+		for _, c := range candidates {
+			if c == allowedClean {
+				return true
+			}
+		}
+		// Schema-agnostic bare-name match: allow "users" matches a
+		// referenced "public.users". Preserved from the original.
+		if unqualified && strings.HasSuffix(allowedClean, "."+tableLower) {
 			return true
 		}
-		if tableQualified != "" && tableQualified == allowedClean {
-			return true
+	}
+	return false
+}
+
+// isTableBlockedWithContext is the search-path-aware BLOCK matcher. It MUST
+// be at least as strict as isTableBlocked: an unqualified bare reference is
+// considered to potentially resolve to ANY schema in the connection's
+// current search_path, so a blocked `secret.keys` is still caught when an
+// agent did `SET search_path TO secret` and queries `keys`.
+//
+// When the REAL-F2 gate is OFF or the caller did not supply a search_path,
+// this function delegates to isTableBlocked with no behavior change. We
+// never weaken blocking: callers always get at-least-shipped enforcement.
+func isTableBlockedWithContext(table string, blockedList []string, searchPath []string) bool {
+	if isTableBlocked(table, blockedList) {
+		return true
+	}
+	// Only consider extra schema candidates for BLOCKING when the REAL-F2
+	// guard is engaged AND a search_path was supplied. This keeps the
+	// fallback path identical to the shipped behavior.
+	if !IsSearchPathAwareAllowOn() {
+		return false
+	}
+	tableLower := strings.ToLower(strings.TrimSpace(table))
+	if tableLower == "" || strings.Contains(tableLower, ".") {
+		return false
+	}
+	for _, sc := range searchPath {
+		sc = strings.ToLower(strings.TrimSpace(sc))
+		if sc == "" || sc == "$user" {
+			continue
 		}
-		// Also match without schema prefix
-		if !strings.Contains(tableLower, ".") && strings.HasSuffix(allowedClean, "."+tableLower) {
+		if isTableBlocked(sc+"."+tableLower, blockedList) {
 			return true
 		}
 	}
