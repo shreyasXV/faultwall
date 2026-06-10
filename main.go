@@ -181,6 +181,47 @@ func main() {
 			log.Printf("📡 Control-plane telemetry enabled → %s (metadata only)", cpCfg.URL)
 		}
 
+		// Self-disabling feature guards (see guards.go). Each guard runs a
+		// startup self-check; if the check fails, the new behavior turns
+		// itself off and the proxy falls back to the prior safe path. We
+		// run these BEFORE starting the proxy so the gates are settled
+		// before any connection is accepted.
+		InitUnqualifiedAllowGuard()                       // F2 (shipped: public-only)
+		InitSearchPathAwareAllowGuard()                   // REAL-F2 (per-connection search_path)
+		LogIdentitySpoofWarning(policyEngine.GetConfig()) // F3 (always)
+		InitRequireAuthTokenGuard()                       // F3 (optional enforce)
+		RunDBIsolationProbe(proxyUpstream)                // F9 (shipped: TCP probe)
+		InitBypassDetectionGuard()                        // REAL-F9 (runtime bypass detection)
+
+		// REAL-F9: poll pg_stat_activity and warn on agent-like sessions
+		// the proxy did not originate. Uses a small monitoring DB pool
+		// (same DSN strategy as the QWM state sampler — DATABASE_URL
+		// preferred, falls back to upstream-derived). Observe-only.
+		if IsBypassDetectionOn() {
+			if dsn, ok := monitoringDSNFromUpstream(proxyUpstream); ok {
+				if mdb, err := openMonitoringDB(dsn); err == nil {
+					if perr := mdb.Ping(); perr == nil {
+						interval := 30 * time.Second
+						if v := os.Getenv("FW_BYPASS_DETECTION_INTERVAL"); v != "" {
+							if d, err := time.ParseDuration(v); err == nil && d > 0 {
+								interval = d
+							}
+						}
+						bd := NewBypassDetector(proxyBackendRegistry, NewDBBypassRowSource(mdb), interval)
+						bd.Start()
+						log.Printf("🔍 REAL-F9 bypass detector running every %s (observe-only)", interval)
+					} else {
+						mdb.Close()
+						log.Printf("⚠️  REAL-F9 bypass detector: monitoring DB ping failed: %v — detection skipped", perr)
+					}
+				} else {
+					log.Printf("⚠️  REAL-F9 bypass detector: monitoring DB open failed: %v — detection skipped", err)
+				}
+			} else {
+				log.Printf("⚠️  REAL-F9 bypass detector: no monitoring DSN — detection skipped")
+			}
+		}
+
 		// Start proxy in a goroutine so we can also run the API server
 		go runProxy(proxyListen, proxyUpstream, policyEngine, tlsCert, tlsKey, upstreamTLS, upstreamTLSSkipVerify)
 

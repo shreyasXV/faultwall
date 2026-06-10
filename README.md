@@ -414,10 +414,11 @@ FaultWall exposes an MCP server so AI agents can self-monitor:
 
 ---
 
-## Known Limitations
+## Known Limitations & Hard Requirements
 
+- **DB-port isolation is REQUIRED.** FaultWall is a proxy. If agents can reach the upstream Postgres port directly (bypassing the proxy), every SQL-level rule in this repo is void and PII is exposed. Network policy / security groups / firewall rules MUST allow only the FaultWall proxy to reach the upstream DB port. At startup the proxy runs a best-effort TCP-dial probe (F9) and logs a warning describing what it observed; this is a topology hint, not proof of isolation. Disable with `FW_DB_ISOLATION_CHECK=false` if you've already verified isolation externally.
+- **Identity spoofing:** `application_name` is fully spoofable. Set `auth_token: <secret>` per agent in `policies.yaml` and have the agent send `agent:<id>:mission:<m>:token:<secret>`. To make tokenless agents fail-closed at the proxy, set `FW_REQUIRE_AUTH_TOKEN=true`. JWT-based identity attestation is on the roadmap.
 - **SSL/TLS:** Proxy mode currently denies SSL negotiation (client retries plaintext). For production with remote databases requiring TLS, use a TLS-terminating proxy in front of FaultWall.
-- **Identity spoofing:** `application_name` can be set by anyone. JWT-based identity attestation is on the roadmap.
 - **Fail-open:** If FaultWall's policy engine crashes, the query is forwarded (fail-open for availability). Configurable fail-closed mode is planned.
 
 ---
