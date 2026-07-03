@@ -288,6 +288,33 @@ Available in both modes at `http://localhost:8080`:
 | **Cost Attribution** | Per-agent/tenant cost breakdowns |
 | **Anomalies** | Statistical deviations from baseline |
 | **Predictions** | Trend forecasts and breach warnings |
+| **APA Proposals** | Policy changes the Autonomous Policy Agent proposes for review |
+
+### APA review: PR mode vs file-drop mode
+
+The Autonomous Policy Agent (APA) watches observations and proposes policy
+changes. It never edits your live policy in place. You choose how proposals are
+reviewed, in the `apa:` section of `policies.yaml`:
+
+```yaml
+apa:
+  enabled: true
+  provider: openai        # openai | anthropic | litellm | fake
+  # PR mode: open a GitHub PR against a repo (needs the gh CLI).
+  policy_repo: myorg/faultwall-policies
+  # File-drop mode: no git required. APA writes a downloadable, apply-ready
+  # policies.yaml plus a diff, surfaced in the dashboard "APA Proposals" panel.
+  proposal_dir: ~/.faultwall
+```
+
+Set either or both. With no `policy_repo`, APA runs in file-drop mode by default
+(proposals land in `~/.faultwall/proposals`, or `APA_PROPOSAL_DIR`). Review them
+in the dashboard: Download the proposed YAML, apply it yourself, then
+`POST /api/policies/reload` (or restart). Endpoints:
+
+- `GET /api/apa/proposals/files` — list proposals (diff + metadata)
+- `GET /api/apa/proposals/files/{id}/download` — download the proposed policies.yaml
+- `POST /api/apa/proposals/files/{id}/apply` | `/dismiss` — mark status
 
 ---
 

@@ -1143,6 +1143,7 @@
   <a href="/api/violations" target="_blank">/violations</a> ·
   <a href="/api/qwm/flags" target="_blank">/qwm/flags</a> ·
   <a href="/api/apa/proposals" target="_blank">/apa/proposals</a> ·
+  <a href="/api/apa/proposals/files" target="_blank">/apa/proposals/files</a> ·
   <a href="/api/policies" target="_blank">/policies</a> ·
   <a href="/api/firewall/agents" target="_blank">/firewall</a>
 </footer>
@@ -2065,6 +2066,34 @@ async function refreshAPAProposals() {
 
     let html = '';
 
+    // File-drop proposals — apply-ready downloadable YAML, no git/PR required.
+    try {
+      const fd = await fetchJSON('/api/apa/proposals/files');
+      const proposals = (fd.proposals || []).filter(p => p.status !== 'dismissed');
+      if (proposals.length) {
+        html += '<div class="violation-meta" style="margin:4px 0; color:var(--muted);">Proposed policy files (download &amp; review)</div>';
+        html += proposals.slice(0, 20).map(p => {
+          const conf = (typeof p.confidence === 'number') ? `${(p.confidence*100).toFixed(0)}%` : '—';
+          const ts = p.created_at ? timeAgo(p.created_at) : '';
+          const applied = p.status === 'applied';
+          const badge = applied ? '<span class="violation-badge monitored">APPLIED</span>' : '<span class="violation-badge" style="background:rgba(72,187,120,0.18);color:#48bb78;">READY</span>';
+          return `<div class="violation-item" style="border-left:3px solid #48bb78;">
+            <span class="violation-icon">📄</span>
+            <div class="violation-body">
+              <div class="violation-msg">${badge} Agent <strong>${escHtml(p.agent_id)}</strong> · confidence ${conf} · ${p.diff_lines||0} diff lines</div>
+              ${p.yaml_diff ? `<pre class="violation-query" style="white-space:pre-wrap; max-height:160px; overflow:auto;">${escHtml(p.yaml_diff)}</pre>` : ''}
+              <div class="violation-meta" style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+                <a href="${escHtml(p.download_url)}" style="color:var(--accent);" title="Download proposed policies.yaml">⬇️ Download YAML</a>
+                ${applied ? '' : `<button onclick="apaProposalAction('${escHtml(p.id)}','apply')" style="cursor:pointer; background:rgba(72,187,120,0.15); border:1px solid rgba(72,187,120,0.4); color:#48bb78; border-radius:4px; padding:2px 8px; font-size:11px;">Mark applied</button>`}
+                <button onclick="apaProposalAction('${escHtml(p.id)}','dismiss')" style="cursor:pointer; background:var(--bg); border:1px solid var(--border); color:var(--muted); border-radius:4px; padding:2px 8px; font-size:11px;">Dismiss</button>
+                <span>${ts}</span>
+              </div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+    } catch(e) { /* file-drop endpoint optional */ }
+
     // Pending review queue — the queries APA wants a human to decide on.
     const pendingItems = [];
     agents.forEach(a => (a.pending_review || []).forEach(fp => pendingItems.push({agent: a.agent_id, fp})));
@@ -2105,6 +2134,14 @@ async function refreshAPAProposals() {
   } catch(e) {
     list.innerHTML = '<div class="empty">APA endpoint unavailable</div>';
   }
+}
+
+// Apply/dismiss a file-drop APA proposal, then refresh the panel.
+async function apaProposalAction(id, action) {
+  try {
+    await fetch('/api/apa/proposals/files/' + encodeURIComponent(id) + '/' + action, { method: 'POST' });
+  } catch(e) { /* best-effort */ }
+  refreshAPAProposals();
 }
 
 // Sparklines on separate interval (every 30s)

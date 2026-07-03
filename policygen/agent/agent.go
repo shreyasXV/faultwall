@@ -185,7 +185,16 @@ func processAgent(
 			YAMLDiff:   diffText,
 			Confidence: proposal.Confidence,
 			DiffLines:  CountDiffLines(diffText),
+			MergedYAML: string(merged),
 		})
+	}
+
+	// File-drop mode: when no git repo is configured, APA does not open a PR.
+	// The proposal has already been persisted via the sink above (a downloadable,
+	// apply-ready YAML for review). This is the self-host, no-git review path.
+	if cfg.PolicyRepo == "" {
+		log.Printf("[apa] agent=%s confidence=%.2f — proposal recorded (file-drop mode, no PR)", agentID, proposal.Confidence)
+		return "", nil
 	}
 
 	// Open git PR.
@@ -221,8 +230,12 @@ func validateConfig(cfg APAConfig) error {
 	if cfg.PolicyPath == "" {
 		return fmt.Errorf("policy_path is required")
 	}
-	if cfg.PolicyRepo == "" && cfg.Provider != "fake" {
-		return fmt.Errorf("policy_repo is required (APA refuses to operate without a configured git repo — see RFC-002 §3.8)")
+	// APA needs a review destination: either a git repo (PR mode) or a
+	// proposal directory (file-drop mode). File-drop satisfies RFC-002 §3.8's
+	// intent (no silent in-place mutation; every change is a reviewable
+	// artifact) without requiring gh/git.
+	if cfg.PolicyRepo == "" && cfg.ProposalDir == "" && cfg.Provider != "fake" {
+		return fmt.Errorf("apa needs a review destination: set policy_repo (PR mode) or proposal_dir (file-drop mode) in the apa: section")
 	}
 	return nil
 }

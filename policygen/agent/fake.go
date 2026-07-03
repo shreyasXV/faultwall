@@ -25,12 +25,20 @@ func newFakeProvider(_ APAConfig) *FakeProvider {
 
 func (f *FakeProvider) Name() string { return "fake" }
 
+// fakeProviderResponse, when non-empty, overrides the fake provider's default
+// (empty-patch) response. Test-only injection point so end-to-end tests can
+// exercise the full patch → diff → sink path without a real LLM.
+var fakeProviderResponse string
+
 func (f *FakeProvider) Reason(_ context.Context, p Prompt) (Response, error) {
 	f.LastPrompt = p
 	if f.Err != nil {
 		return Response{}, f.Err
 	}
 	text := f.Response
+	if text == "" {
+		text = fakeProviderResponse
+	}
 	if text == "" {
 		text = f.buildDefaultResponse(p)
 	}

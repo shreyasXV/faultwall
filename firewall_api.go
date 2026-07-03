@@ -193,6 +193,94 @@ func handleAPAProposals(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// apaProposalDir resolves the file-drop proposal directory the same way the
+// `apa` command does: APA_PROPOSAL_DIR env, else ~/.faultwall.
+func apaProposalDir() string {
+	if env := os.Getenv("APA_PROPOSAL_DIR"); env != "" {
+		return env
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home + "/.faultwall"
+	}
+	return ".faultwall"
+}
+
+// handleAPAProposalFiles lists file-drop APA proposals (the no-git review
+// queue). Each entry is a downloadable, apply-ready policy YAML plus a diff.
+// GET /api/apa/proposals/files
+func handleAPAProposalFiles(w http.ResponseWriter, r *http.Request) {
+	props, err := agent.ListProposals(apaProposalDir())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Summary view: omit the (potentially large) merged YAML from the list; it
+	// is fetched on demand via the download endpoint.
+	type summary struct {
+		ID         string    `json:"id"`
+		AgentID    string    `json:"agent_id"`
+		Title      string    `json:"title"`
+		Confidence float64   `json:"confidence"`
+		DiffLines  int       `json:"diff_lines"`
+		YAMLDiff   string    `json:"yaml_diff"`
+		CreatedAt  time.Time `json:"created_at"`
+		Status     string    `json:"status"`
+		DownloadURL string   `json:"download_url"`
+	}
+	out := make([]summary, 0, len(props))
+	for _, p := range props {
+		out = append(out, summary{
+			ID: p.ID, AgentID: p.AgentID, Title: p.Title, Confidence: p.Confidence,
+			DiffLines: p.DiffLines, YAMLDiff: p.YAMLDiff, CreatedAt: p.CreatedAt,
+			Status: p.Status, DownloadURL: "/api/apa/proposals/files/" + p.ID + "/download",
+		})
+	}
+	writeJSON(w, map[string]interface{}{"proposals": out, "count": len(out)})
+}
+
+// handleAPAProposalFileAction serves a single file-drop proposal:
+//   GET  /api/apa/proposals/files/{id}/download  → the proposed policies.yaml
+//   POST /api/apa/proposals/files/{id}/apply     → mark applied
+//   POST /api/apa/proposals/files/{id}/dismiss   → mark dismissed
+func handleAPAProposalFileAction(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/api/apa/proposals/files/")
+	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) != 2 {
+		http.Error(w, "expected /api/apa/proposals/files/{id}/{download|apply|dismiss}", http.StatusBadRequest)
+		return
+	}
+	id, action := parts[0], parts[1]
+	dir := apaProposalDir()
+
+	switch action {
+	case "download":
+		p, err := agent.GetProposal(dir, id)
+		if err != nil {
+			http.Error(w, "proposal not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-yaml")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"policies.proposed."+p.ID+".yaml\"")
+		_, _ = w.Write([]byte(p.MergedYAML))
+	case "apply", "dismiss":
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		status := "applied"
+		if action == "dismiss" {
+			status = "dismissed"
+		}
+		if err := agent.SetProposalStatus(dir, id, status); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, map[string]interface{}{"id": id, "status": status})
+	default:
+		http.Error(w, "unknown action: "+action, http.StatusBadRequest)
+	}
+}
+
 // handleAgentStats returns per-agent aggregated metrics
 // GET /api/agents/stats
 func handleAgentStats(w http.ResponseWriter, r *http.Request) {

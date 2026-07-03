@@ -166,14 +166,34 @@ func runAPADispatch(args []string, runOnce bool) error {
 		cfg.Provider = *providerFlag
 	}
 
-	// If a control plane is configured (~/.faultwall/config.toml [control_plane]
-	// or env), also ship each proposed diff to its review queue (POST
-	// /v1/apa/propose). Metadata + diff only; off the APA cron path. PRs are
-	// still opened as before — this is additive.
+	// Resolve the proposal directory (file-drop review mode). Precedence:
+	// APA_PROPOSAL_DIR env > apa.proposal_dir in policies.yaml. When neither is
+	// set but no git repo is configured either, default to ~/.faultwall so
+	// self-host users get reviewable, downloadable proposals out of the box
+	// instead of a hard config error.
+	if env := os.Getenv("APA_PROPOSAL_DIR"); env != "" {
+		cfg.ProposalDir = env
+	}
+	if cfg.ProposalDir == "" && cfg.PolicyRepo == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			cfg.ProposalDir = home + "/.faultwall"
+		}
+	}
+
+	// Collect sinks. File-drop persists an apply-ready YAML for dashboard review
+	// (no git). Control-plane ships diff+metadata to a remote review queue. Both
+	// can be active; we fan out to whichever are configured.
+	var sinks []agent.ProposalSink
+	if cfg.ProposalDir != "" {
+		sinks = append(sinks, agent.NewFileSink(cfg.ProposalDir).Sink())
+	}
 	if cpCfg, ok := loadControlPlaneConfig(); ok || (cpCfg.URL != "" && cpCfg.Token != "") {
 		if apaClient := NewAPAProposalClient(cpCfg); apaClient != nil {
-			cfg.Sink = apaClient.Sink()
+			sinks = append(sinks, apaClient.Sink())
 		}
+	}
+	if len(sinks) > 0 {
+		cfg.Sink = agent.FanOutSinks(sinks...)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)

@@ -26,6 +26,11 @@ type ProposalReport struct {
 	YAMLDiff   string
 	Confidence float64
 	DiffLines  int
+	// MergedYAML is the full proposed policies.yaml content (current file with the
+	// LLM patch applied). Carried so a FileSink can drop a directly downloadable,
+	// apply-ready artifact for review — no git/PR required. Diff-only sinks (e.g.
+	// the control plane) may ignore it.
+	MergedYAML string
 }
 
 // ProposalSink, when set, is invoked (best-effort, off the hot path) with each
@@ -33,6 +38,19 @@ type ProposalReport struct {
 // it for human review. It must never block APA or mutate policy. Errors are
 // the sink's own concern; RunOnce ignores them.
 type ProposalSink func(ProposalReport)
+
+// FanOutSinks composes multiple ProposalSinks into one. Each is invoked in
+// order; a panicking sink is contained so the others (and APA) still run.
+func FanOutSinks(sinks ...ProposalSink) ProposalSink {
+	return func(rep ProposalReport) {
+		for _, s := range sinks {
+			if s == nil {
+				continue
+			}
+			reportProposalSafe(s, rep)
+		}
+	}
+}
 
 // APAConfig is the runtime configuration for one APA run or cron loop.
 type APAConfig struct {
@@ -50,6 +68,13 @@ type APAConfig struct {
 	ObservationPath      string // path to observations.jsonl
 	PolicyPath           string // path to policies.yaml to diff against
 	AuditLogPath         string
+
+	// ProposalDir, when non-empty, enables file-drop mode: each computed
+	// proposal is written to this directory as a JSON record + a directly
+	// downloadable proposed-policy YAML, and APA no longer requires a git
+	// repo. Set from apa.proposal_dir in policies.yaml (or the
+	// APA_PROPOSAL_DIR env). PR mode still runs when PolicyRepo is set.
+	ProposalDir string
 
 	// Sink, when non-nil, receives each computed proposal for external
 	// recording (e.g. control-plane review queue). Set by the caller; not
@@ -70,6 +95,7 @@ type apaYAML struct {
 	MaxTokensPerRun      int    `yaml:"max_tokens_per_run"`
 	PerAgentMaxDiffLines int    `yaml:"per_agent_max_diff_lines"`
 	SchemaCacheTTL       string `yaml:"schema_cache_ttl"`
+	ProposalDir          string `yaml:"proposal_dir"`
 }
 
 // policyFileAPA is the minimal slice of policies.yaml we need to read the apa: section.
@@ -101,6 +127,7 @@ func LoadConfig(policyPath, observationPath, auditLogPath string) (APAConfig, er
 		ObservationPath:      observationPath,
 		PolicyPath:           policyPath,
 		AuditLogPath:         auditLogPath,
+		ProposalDir:          s.ProposalDir,
 	}
 	if cfg.Schedule == "" {
 		cfg.Schedule = defaultSchedule

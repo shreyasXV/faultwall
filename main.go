@@ -247,6 +247,8 @@ func main() {
 		mux.HandleFunc("/api/violations", handleViolations)
 		mux.HandleFunc("/api/qwm/flags", handleQWMFlags)
 		mux.HandleFunc("/api/apa/proposals", handleAPAProposals)
+		mux.HandleFunc("/api/apa/proposals/files", handleAPAProposalFiles)
+		mux.HandleFunc("/api/apa/proposals/files/", handleAPAProposalFileAction)
 		mux.HandleFunc("/api/rules/block", handleBlockRule)
 		mux.HandleFunc("/api/rules/preview", handleRulePreview)
 		mux.HandleFunc("/api/rules/create", handleRuleCreate)
