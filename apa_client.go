@@ -32,6 +32,7 @@ type apaProposalPayload struct {
 	AgentID        string  `json:"agent_id"`
 	Title          string  `json:"title"`
 	YAMLDiff       string  `json:"yaml_diff"`
+	MergedYAML     string  `json:"merged_yaml"`
 	Confidence     float64 `json:"confidence"`
 	DiffLines      int     `json:"diff_lines"`
 }
@@ -77,6 +78,7 @@ func (c *APAProposalClient) post(rep agent.ProposalReport) {
 		AgentID:        rep.AgentID,
 		Title:          rep.Title,
 		YAMLDiff:       rep.YAMLDiff,
+		MergedYAML:     rep.MergedYAML,
 		Confidence:     rep.Confidence,
 		DiffLines:      rep.DiffLines,
 	})
