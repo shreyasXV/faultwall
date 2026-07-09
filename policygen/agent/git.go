@@ -16,6 +16,12 @@ type PRRequest struct {
 	PolicyPath string
 	NewContent []byte
 	BaseBranch string // PR target branch; defaults to "main" if empty
+	// RepoDir is the git working tree APA operates in. All git/gh commands run
+	// with this as their working directory. When empty, commands fall back to
+	// the process cwd (legacy behavior) — but that is almost always wrong when
+	// APA runs as a service, which produced the classic
+	// "fatal: 'origin' does not appear to be a git repository" failure.
+	RepoDir string
 }
 
 // PRResult is returned after opening (or attempting to open) a PR.
@@ -32,30 +38,40 @@ func OpenPR(req PRRequest) (PRResult, error) {
 		return PRResult{}, err
 	}
 
+	dir := req.RepoDir
+
+	// Fail loudly and early if the working directory is not a git repo with an
+	// "origin" remote. Otherwise the first push dies deep in the flow with the
+	// opaque "fatal: 'origin' does not appear to be a git repository" message
+	// after a branch + commit have already been created.
+	if err := checkRepo(dir); err != nil {
+		return PRResult{}, err
+	}
+
 	// Create branch
-	if out, err := gitRun("checkout", "-b", req.BranchName); err != nil {
+	if out, err := gitRunDir(dir, "checkout", "-b", req.BranchName); err != nil {
 		return PRResult{}, fmt.Errorf("git checkout -b: %w\n%s", err, out)
 	}
 
 	// Write the new policy content
 	if err := os.WriteFile(req.PolicyPath, req.NewContent, 0644); err != nil {
-		gitRun("checkout", "-") //nolint — best-effort cleanup
+		gitRunDir(dir, "checkout", "-") //nolint — best-effort cleanup
 		return PRResult{}, fmt.Errorf("write policy file: %w", err)
 	}
 
 	// Stage and commit
-	if out, err := gitRun("add", req.PolicyPath); err != nil {
-		gitRun("checkout", "-")
+	if out, err := gitRunDir(dir, "add", req.PolicyPath); err != nil {
+		gitRunDir(dir, "checkout", "-")
 		return PRResult{}, fmt.Errorf("git add: %w\n%s", err, out)
 	}
-	if out, err := gitRun("commit", "-m", req.Title+"\n\n"+req.Body); err != nil {
-		gitRun("checkout", "-")
+	if out, err := gitRunDir(dir, "commit", "-m", req.Title+"\n\n"+req.Body); err != nil {
+		gitRunDir(dir, "checkout", "-")
 		return PRResult{}, fmt.Errorf("git commit: %w\n%s", err, out)
 	}
 
 	// Push
-	if out, err := gitRun("push", "origin", req.BranchName); err != nil {
-		gitRun("checkout", "-")
+	if out, err := gitRunDir(dir, "push", "origin", req.BranchName); err != nil {
+		gitRunDir(dir, "checkout", "-")
 		return PRResult{}, fmt.Errorf("git push: %w\n%s", err, out)
 	}
 
@@ -63,13 +79,13 @@ func OpenPR(req PRRequest) (PRResult, error) {
 	if base == "" {
 		base = "main"
 	}
-	url, err := ghCreatePR(req.Title, req.Body, base)
+	url, err := ghCreatePR(dir, req.Title, req.Body, base)
 	if err != nil {
 		return PRResult{BranchName: req.BranchName}, fmt.Errorf("gh pr create: %w", err)
 	}
 
 	// Return to original branch
-	gitRun("checkout", "-") //nolint — best-effort
+	gitRunDir(dir, "checkout", "-") //nolint — best-effort
 
 	return PRResult{URL: url, BranchName: req.BranchName}, nil
 }
@@ -127,16 +143,46 @@ func PRBody(p Proposal, resp Response, runID string, diffText string) string {
 }
 
 func gitRun(args ...string) (string, error) {
-	out, err := exec.Command("git", args...).CombinedOutput()
+	return gitRunDir("", args...)
+}
+
+// gitRunDir runs git with the given working directory. An empty dir falls back
+// to the process cwd.
+func gitRunDir(dir string, args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
-func ghCreatePR(title, body, baseBranch string) (string, error) {
-	out, err := exec.Command("gh", "pr", "create",
+// checkRepo verifies dir is inside a git work tree and has an "origin" remote,
+// returning an actionable error instead of the raw git message.
+func checkRepo(dir string) error {
+	if out, err := gitRunDir(dir, "rev-parse", "--is-inside-work-tree"); err != nil {
+		loc := dir
+		if loc == "" {
+			loc = "(process working directory)"
+		}
+		return fmt.Errorf("apa PR mode requires a git repo but %s is not one — set apa.policy_repo in policies.yaml, or use file-drop mode (apa.proposal_dir); git said: %s", loc, strings.TrimSpace(out))
+	}
+	if out, err := gitRunDir(dir, "remote", "get-url", "origin"); err != nil {
+		return fmt.Errorf("apa PR mode requires an 'origin' remote in %q but none is configured — add one with `git remote add origin <url>` or switch to file-drop mode (apa.proposal_dir); git said: %s", dir, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+func ghCreatePR(dir, title, body, baseBranch string) (string, error) {
+	cmd := exec.Command("gh", "pr", "create",
 		"--title", title,
 		"--body", body,
 		"--base", baseBranch,
-	).Output()
+	)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}

@@ -209,6 +209,7 @@ func processAgent(
 		PolicyPath: cfg.PolicyPath,
 		NewContent: merged,
 		BaseBranch: cfg.BaseBranch,
+		RepoDir:    cfg.PolicyRepo,
 	})
 	if err != nil {
 		rec.Error = "pr: " + err.Error()
