@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -87,6 +88,7 @@ func (p *anthropicProvider) Reason(ctx context.Context, prompt Prompt) (Response
 
 	var result struct {
 		Content []struct {
+			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
 		Usage struct {
@@ -101,8 +103,24 @@ func (p *anthropicProvider) Reason(ctx context.Context, prompt Prompt) (Response
 		return Response{}, fmt.Errorf("anthropic returned no content blocks")
 	}
 
+	// Concatenate every text block. Claude may emit a leading prose/thinking
+	// block before the JSON block; reading only Content[0].Text then handed the
+	// parser prose (often starting with "*" or a bullet), yielding
+	// "invalid character '*' looking for beginning of value". Joining all text
+	// blocks lets extractJSONObject find the real JSON regardless of position.
+	var sb strings.Builder
+	for _, c := range result.Content {
+		if c.Text == "" {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteByte('\n')
+		}
+		sb.WriteString(c.Text)
+	}
+
 	return Response{
-		Text:         result.Content[0].Text,
+		Text:         sb.String(),
 		InputTokens:  result.Usage.InputTokens,
 		OutputTokens: result.Usage.OutputTokens,
 		LatencyMs:    latency,

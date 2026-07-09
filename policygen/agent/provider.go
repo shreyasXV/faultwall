@@ -100,9 +100,17 @@ func parseProposal(text string) (Proposal, error) {
 }
 
 // extractJSONObject strips Markdown code fences and any surrounding prose,
-// returning the substring from the first "{" to the last "}". If no braces are
-// found it returns the trimmed input unchanged (json.Unmarshal then reports the
-// real error). Safe for input that is already a bare JSON object.
+// returning the first brace-balanced JSON object found in the input. Unlike a
+// naive first-"{" / last-"}" slice, this respects braces inside JSON string
+// literals and ignores stray braces in surrounding prose, so a response like
+//
+//   - Here is my analysis {not json}
+//     ```json
+//     { "schema": "...", "summary": "a } brace in text" }
+//     ```
+//
+// still yields the correct object. If no balanced object is found it returns the
+// trimmed input unchanged (json.Unmarshal then reports the real error).
 func extractJSONObject(s string) string {
 	trimmed := strings.TrimSpace(s)
 	// Strip a leading ```json / ``` fence and its closing fence if present.
@@ -115,12 +123,72 @@ func extractJSONObject(s string) string {
 		}
 		trimmed = strings.TrimSpace(trimmed)
 	}
-	start := strings.IndexByte(trimmed, '{')
-	end := strings.LastIndexByte(trimmed, '}')
-	if start >= 0 && end > start {
-		return trimmed[start : end+1]
+	if obj := firstValidJSONObject(trimmed); obj != "" {
+		return obj
 	}
 	return trimmed
+}
+
+// firstValidJSONObject scans left to right for brace-balanced objects and
+// returns the first one that is syntactically valid JSON. This skips stray
+// prose braces like "{curly}" that happen to balance but are not JSON. If none
+// validate, it falls back to the first balanced object (so the caller's
+// json.Unmarshal reports a meaningful error), or "" when there is no object.
+func firstValidJSONObject(s string) string {
+	first := ""
+	for i := 0; i < len(s); i++ {
+		if s[i] != '{' {
+			continue
+		}
+		obj := balancedObjectAt(s, i)
+		if obj == "" {
+			break // no closing brace anywhere from here on
+		}
+		if first == "" {
+			first = obj
+		}
+		if json.Valid([]byte(obj)) {
+			return obj
+		}
+		// Skip past this candidate's opening brace and keep looking.
+	}
+	return first
+}
+
+// balancedObjectAt returns the substring starting at the '{' at index start
+// through its matching '}', tracking string literals and backslash escapes so
+// braces inside JSON strings do not throw off the depth count. Returns "" if
+// unbalanced.
+func balancedObjectAt(s string, start int) string {
+	depth := 0
+	inStr := false
+	esc := false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return ""
 }
 
 // proposalPatchSchema is the strict shape APA is allowed to emit in
