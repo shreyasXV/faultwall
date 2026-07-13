@@ -563,13 +563,31 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   display: flex;
   align-items: flex-end;
   gap: 6px;
-  padding: 16px;
-  height: 110px;
+  padding: 28px 16px 8px; /* top padding reserves space for count labels */
+  height: 130px;
+  box-sizing: border-box;
 }
-.bar-col { display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 32px; }
-.bar-rect { width: 100%; max-width: 32px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 2px 2px 0 0; transition: height .4s ease; }
-.bar-count { font-size: 11px; color: var(--accent); font-weight: 600; margin-bottom: 2px; font-family: var(--mono); }
-.bar-label { font-size: 11px; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 56px; text-align: center; }
+.bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end; /* bars grow from the bottom */
+  flex: 1;
+  min-width: 32px;
+  height: 100%;
+  position: relative;
+}
+.bar-rect { width: 100%; max-width: 40px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 2px 2px 0 0; transition: height .4s ease; }
+.bar-count {
+  position: absolute;
+  top: 0; /* pinned to top of the bar-col, always above the bar */
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  font-family: var(--mono);
+  line-height: 1;
+}
+.bar-label { font-size: 11px; color: var(--muted); margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60px; text-align: center; }
 
 /* ── Misc ── */
 .empty {
@@ -823,7 +841,7 @@ footer a:hover { color: var(--accent); }
       <span class="section-count" id="apa-pending-count">—</span>
       <span class="section-note">human-reviewed — nothing auto-applied</span>
       <div class="section-actions">
-        <a href="/api/policies" class="btn btn-download" download="policies.yaml" title="Download the current active policies.yaml">
+        <a href="/api/policies/yaml" class="btn btn-download" download="policies.yaml" title="Download the current active policies.yaml">
           ↓ Current Policy YAML
         </a>
       </div>
@@ -1449,7 +1467,7 @@ function renderViolationChart(violations) {
   const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,8);
   const maxCount = Math.max(1,...entries.map(e=>e[1]));
   chart.innerHTML = '<div class="bar-chart">'+entries.map(([agent,count]) => {
-    const h = (count/maxCount)*80;
+    const h = Math.max(4, (count/maxCount)*94); // 94px = chart height minus top+bottom padding
     return `<div class="bar-col">
       <span class="bar-count">${count}</span>
       <div class="bar-rect" style="height:${h}px"></div>

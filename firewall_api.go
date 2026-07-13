@@ -83,6 +83,20 @@ func handlePolicies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cfg)
 }
 
+// handlePoliciesYAML serves the raw on-disk policies file as downloadable YAML.
+// GET /api/policies/yaml
+func handlePoliciesYAML(w http.ResponseWriter, r *http.Request) {
+	path := policyEngine.GetFilePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.Error(w, "could not read policies file: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-yaml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="policies.yaml"`)
+	w.Write(data)
+}
+
 // handlePoliciesReload hot-reloads the policies.yaml file
 // POST /api/policies/reload
 func handlePoliciesReload(w http.ResponseWriter, r *http.Request) {
