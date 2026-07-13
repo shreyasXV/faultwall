@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -37,6 +38,9 @@ type StateSampler struct {
 	// for TPS delta computation between samples
 	lastXact   int64
 	lastSample time.Time
+
+	// cached once from SHOW max_connections (rarely changes)
+	maxConns int
 }
 
 // NewStateSampler builds a sampler. cores is the configured core count used as
@@ -140,6 +144,30 @@ func (s *StateSampler) sampleOnce() {
 
 	util := float64(active) / s.cores
 
+	// Query max_connections once and cache it (rarely changes, cheap to hold).
+	if s.maxConns == 0 {
+		var mcStr string
+		if err := s.db.QueryRow(`SHOW max_connections`).Scan(&mcStr); err == nil {
+			if mc, err := strconv.Atoi(mcStr); err == nil && mc > 0 {
+				s.maxConns = mc
+			}
+		}
+		if s.maxConns == 0 {
+			s.maxConns = 100 // safe default
+		}
+	}
+
+	// Bridge blocked-backend signals into the shape-scorer legacy fields.
+	// LockContentionMs: longest active query age is the best pg_stat_activity
+	// proxy for lock-wait duration (eBPF would give exact lock hold times).
+	// AnomalyRateAgent: fraction of active backends that are lock-waiting;
+	// >0 means contention is happening right now.
+	var lockContentionMs float64
+	if blocked > 0 {
+		lockContentionMs = longest
+	}
+	anomalyRate := float64(blocked) / math.Max(1, float64(active))
+
 	s.snap.Store(QWMInfraState{
 		ActiveBackends:  active,
 		BlockedBackends: blocked,
@@ -147,8 +175,13 @@ func (s *StateSampler) sampleOnce() {
 		CacheHitRatio:   cacheHit,
 		TPS:             tps,
 		Utilization:     util,
-		// keep the legacy fields populated too for the shape scorer
-		ActiveConnections: active,
+		// shape-scorer fields — bridged from pg_stat_activity
+		ActiveConnections:   active,
+		MaxConnections:      s.maxConns,
+		LockContentionMs:    lockContentionMs,
+		AnomalyRateAgent:    anomalyRate,
+		AvgQueryTime60sMs:   longest, // best proxy available without eBPF
+		BaselineQueryTimeMs: 50,      // conservative baseline (queries under ~50ms are normal)
 	})
 }
 
@@ -177,7 +210,7 @@ func monitoringDSNFromUpstream(upstreamAddr string) (string, bool) {
 	}
 	user := firstNonEmpty(getenv("FW_MONITOR_USER"), getenv("PGUSER"), "postgres")
 	dbname := firstNonEmpty(getenv("FW_MONITOR_DB"), getenv("PGDATABASE"), user)
-	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=prefer connect_timeout=3",
+	dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=disable connect_timeout=3",
 		host, port, user, dbname)
 	if pw := getenv("FW_MONITOR_PASSWORD"); pw != "" {
 		dsn += " password=" + pw

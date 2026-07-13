@@ -6,1099 +6,1055 @@
 <link rel="icon" href="/favicon.png" type="image/png">
 <title>FaultWall</title>
 <style>
-  :root {
-    --bg: #0d0d0d;
-    --surface: #161616;
-    --surface2: #1e1e1e;
-    --border: #2a2a2a;
-    --red: #e53e3e;
-    --orange: #f6821f;
-    --yellow: #f5c542;
-    --green: #38a169;
-    --text: #e2e8f0;
-    --muted: #718096;
-    --accent: #e53e3e;
-    --accent2: #f6821f;
+/* ── Tokens ── */
+:root {
+  --accent:     #38bdf8;
+  --accent-dim: rgba(56,189,248,.10);
+  --red:        #fb7185;
+  --red-bg:     rgba(251,113,133,.08);
+  --yellow:     #fbbf24;
+  --yel-bg:     rgba(251,191,36,.08);
+  --green:      #34d399;
+  --grn-bg:     rgba(52,211,153,.08);
+  --bg:         #0c0e14;
+  --surface:    #111520;
+  --surface2:   #161b2b;
+  --border:     #1e2438;
+  --dim:        #252d44;
+  --text:       #c2cade;
+  --fg:         #c2cade;
+  --text2:      #8892a8;
+  --muted:      #4d5872;
+  --sans: system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
+  --mono: "SF Mono","Cascadia Code",Consolas,"Courier New",monospace;
+  --r: 4px;
+  --orange: #fbbf24;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg:       #f4f5f7;
+    --surface:  #ffffff;
+    --surface2: #f0f2f6;
+    --border:   #dde1ea;
+    --dim:      #e4e7ef;
+    --text:     #1c2033;
+    --fg:       #1c2033;
+    --text2:    #5a6380;
+    --muted:    #9199ad;
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Courier New', Courier, monospace;
-    font-size: 13px;
-    min-height: 100vh;
-  }
-  a { color: var(--orange); text-decoration: none; }
-  a:hover { text-decoration: underline; }
+}
+:root[data-theme="light"] {
+  --bg:       #f4f5f7;
+  --surface:  #ffffff;
+  --surface2: #f0f2f6;
+  --border:   #dde1ea;
+  --dim:      #e4e7ef;
+  --text:     #1c2033;
+  --fg:       #1c2033;
+  --text2:    #5a6380;
+  --muted:    #9199ad;
+}
+:root[data-theme="dark"] {
+  --bg:         #0c0e14;
+  --surface:    #111520;
+  --surface2:   #161b2b;
+  --border:     #1e2438;
+  --dim:        #252d44;
+  --text:       #c2cade;
+  --fg:         #c2cade;
+  --text2:      #8892a8;
+  --muted:      #4d5872;
+}
 
-  /* ── Header ── */
-  header {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-  .logo {
-    font-size: 22px;
-    font-weight: bold;
-    background: linear-gradient(135deg, var(--red), var(--orange));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    letter-spacing: 1px;
-  }
-  .header-meta {
-    display: flex;
-    gap: 12px;
-    align-items: center;
-    flex-wrap: wrap;
-  }
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 3px 8px;
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .badge .dot {
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    background: var(--green);
-    flex-shrink: 0;
-    animation: pulse 2s infinite;
-  }
-  .badge .dot.err { background: var(--red); animation: none; }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
-  }
-  .pattern-badge {
-    background: linear-gradient(135deg, rgba(229,62,62,0.15), rgba(246,130,31,0.15));
-    border-color: rgba(246,130,31,0.3);
-    color: var(--orange);
-    font-weight: bold;
-  }
-  .refresh-indicator {
-    font-size: 10px;
-    color: var(--muted);
-  }
-  .export-btns {
-    display: flex;
-    gap: 6px;
-  }
-  .export-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 3px 10px;
-    font-size: 11px;
-    color: var(--muted);
-    cursor: pointer;
-    text-decoration: none;
-    font-family: inherit;
-    transition: border-color 0.15s, color 0.15s;
-  }
-  .export-btn:hover {
-    border-color: var(--orange);
-    color: var(--orange);
-    text-decoration: none;
-  }
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: var(--mono); font-size: 12px; }
 
-  /* ── Alert Banner ── */
-  #alert-banner {
-    display: none;
-    margin-bottom: 4px;
-  }
-  .alert-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 16px;
-    border-radius: 6px;
-    border: 1px solid;
-    margin-bottom: 6px;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-  .alert-item.critical {
-    background: rgba(229,62,62,0.12);
-    border-color: rgba(229,62,62,0.4);
-    color: #fc8181;
-  }
-  .alert-item.warning {
-    background: rgba(245,197,66,0.12);
-    border-color: rgba(245,197,66,0.4);
-    color: var(--yellow);
-  }
-  .alert-item.info {
-    background: rgba(113,128,150,0.12);
-    border-color: rgba(113,128,150,0.4);
-    color: var(--muted);
-  }
-  .alert-icon { font-size: 16px; flex-shrink: 0; }
-  .alert-content { flex: 1; min-width: 200px; }
-  .alert-msg { font-weight: bold; font-size: 12px; }
-  .alert-meta { font-size: 11px; opacity: 0.8; margin-top: 2px; }
-  .alert-dismiss {
-    background: none;
-    border: none;
-    color: inherit;
-    cursor: pointer;
-    font-size: 14px;
-    opacity: 0.6;
-    padding: 2px 6px;
-    flex-shrink: 0;
-  }
-  .alert-dismiss:hover { opacity: 1; }
+/* ── Topbar ── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  height: 48px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 20px;
+}
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.logo-mark {
+  width: 26px; height: 26px;
+  background: var(--accent);
+  color: #0c0e14;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: var(--r);
+  display: flex; align-items: center; justify-content: center;
+  letter-spacing: -.5px;
+  flex-shrink: 0;
+}
+.logo-name {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  color: var(--text);
+}
+.topbar-kpis {
+  display: flex;
+  gap: 0;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+  flex: 1;
+}
+.kpi {
+  display: flex;
+  flex-direction: column;
+  padding: 0 16px;
+  border-right: 1px solid var(--border);
+  min-width: 72px;
+}
+.kpi-value {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  margin-top: 2px;
+}
+.kpi-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--muted);
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text2);
+}
+.live-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+}
+.live-dot.err { background: var(--red); }
+.live-dot.ok { animation: blink 2.5s infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+.refresh-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.enforce-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--r);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+.enforce-badge.enforce {
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid rgba(251,113,133,.25);
+}
+.enforce-badge.monitor {
+  background: var(--yel-bg);
+  color: var(--yellow);
+  border: 1px solid rgba(251,191,36,.25);
+}
+.pattern-tag {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--muted);
+  padding: 2px 7px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text2);
+  cursor: pointer;
+  transition: border-color .12s, color .12s;
+  text-decoration: none;
+}
+.icon-btn:hover { border-color: var(--accent); color: var(--accent); text-decoration: none; }
+.theme-btn {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text2);
+}
+.theme-btn:hover { border-color: var(--accent); }
 
-  /* ── Layout ── */
-  main {
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 20px 16px;
-    display: grid;
-    gap: 20px;
-  }
+/* ── Alert Banner ── */
+#alert-banner { padding: 0 20px; }
+.alert-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--r);
+  border-left: 3px solid;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.alert-item.critical { background: var(--red-bg); border-color: var(--red); color: var(--red); }
+.alert-item.warning  { background: var(--yel-bg); border-color: var(--yellow); color: var(--yellow); }
+.alert-item.info     { background: var(--surface2); border-color: var(--border); color: var(--text2); }
+.alert-content { flex: 1; }
+.alert-msg { font-weight: 600; }
+.alert-meta { font-size: 12px; opacity: .75; margin-top: 2px; }
+.alert-dismiss { background: none; border: none; cursor: pointer; color: inherit; opacity: .5; font-size: 16px; padding: 0 4px; flex-shrink: 0; }
+.alert-dismiss:hover { opacity: 1; }
 
-  /* ── Cards ── */
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow: hidden;
-  }
-  .card-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .card-title {
-    font-size: 13px;
-    font-weight: bold;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .card-subtitle {
-    font-size: 11px;
-    color: var(--muted);
-  }
+/* ── Main layout ── */
+main {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
 
-  /* ── Overview Stats ── */
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 0;
-  }
-  .stat-box {
-    padding: 18px 16px;
-    border-right: 1px solid var(--border);
-    text-align: center;
-    position: relative;
-  }
-  .stat-box:last-child { border-right: none; }
-  .stat-value {
-    font-size: 28px;
-    font-weight: bold;
-    line-height: 1.1;
-    background: linear-gradient(135deg, var(--red), var(--orange));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-  .stat-label {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  .stat-sub {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-  .conn-bar-wrap {
-    background: var(--border);
-    border-radius: 3px;
-    height: 4px;
-    margin-top: 6px;
-    overflow: hidden;
-  }
-  .conn-bar {
-    height: 100%;
-    background: linear-gradient(90deg, var(--green), var(--orange), var(--red));
-    border-radius: 3px;
-    transition: width 0.5s ease;
-  }
-  .sparkline-wrap {
-    margin-top: 8px;
-    display: flex;
-    justify-content: center;
-    opacity: 0.7;
-  }
-  .sparkline-wrap svg {
-    display: block;
-  }
+/* ── Section ── */
+.section { display: flex; flex-direction: column; gap: 0; }
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0;
+}
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  color: var(--text2);
+}
+.section-count {
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--muted);
+  margin-left: 2px;
+}
+.section-note {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: normal;
+}
+.section-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
 
-  /* ── Table ── */
-  .table-wrap { overflow-x: auto; }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 600px;
-  }
-  th {
-    padding: 9px 12px;
-    text-align: left;
-    font-size: 11px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-    cursor: pointer;
-    user-select: none;
-    background: var(--surface2);
-  }
-  th:hover { color: var(--orange); }
-  th .sort-arrow { margin-left: 3px; opacity: 0.4; }
-  th.sorted .sort-arrow { opacity: 1; color: var(--orange); }
-  td {
-    padding: 9px 12px;
-    border-bottom: 1px solid var(--border);
-    color: var(--text);
-    white-space: nowrap;
-    overflow: hidden;
-    max-width: 220px;
-    text-overflow: ellipsis;
-  }
-  tr:last-child td { border-bottom: none; }
-  tr.tenant-row { cursor: pointer; }
-  tr.tenant-row:hover td { background: rgba(246,130,31,0.05); }
-  tr.tenant-row.active td { background: rgba(246,130,31,0.08); }
-  .tenant-id {
-    color: var(--orange);
-    font-weight: bold;
-    max-width: 120px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: inline-block;
-  }
-  .num { text-align: right; }
-  .num td { text-align: right; }
+/* ── Cards ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.card + .card { margin-top: 1px; }
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.card-sub { font-size: 12px; color: var(--muted); }
+.card-body { padding: 0; }
 
-  /* Latency bar cells */
-  .latency-cell {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .mini-bar {
-    flex: 1;
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-    min-width: 40px;
-  }
-  .mini-bar-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--green), var(--orange));
-    border-radius: 2px;
-    transition: width 0.5s ease;
-  }
-  .mini-bar-fill.danger { background: linear-gradient(90deg, var(--orange), var(--red)); }
+/* ── Two-col ── */
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
 
-  /* Query cells */
-  .query-text {
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    color: #a0aec0;
-    max-width: 300px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    display: inline-block;
-  }
+/* ── KPI strip ── */
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+}
+.kpi-cell {
+  padding: 16px 20px;
+  border-right: 1px solid var(--border);
+}
+.kpi-cell:last-child { border-right: none; }
+.kpi-cell-value {
+  font-family: var(--mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.kpi-cell-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.kpi-cell-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
 
-  /* Rank badges */
-  .rank { font-size: 13px; }
-  .rank-1 { color: #ffd700; }
-  .rank-2 { color: #c0c0c0; }
-  .rank-3 { color: #cd7f32; }
+/* ── Tables ── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 500px; }
+thead th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  background: var(--surface2);
+}
+thead th:hover { color: var(--accent); }
+th .sort-arrow { margin-left: 3px; opacity: .35; }
+th.sorted .sort-arrow { opacity: 1; color: var(--accent); }
+tbody td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 240px;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+tbody tr:last-child td { border-bottom: none; }
+tbody tr.tenant-row { cursor: pointer; }
+tbody tr.tenant-row:hover td { background: var(--surface2); }
+tbody tr.tenant-row.active td { background: var(--accent-dim); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cell-mono {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+}
+.agent-id {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+}
+.query-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+}
 
-  /* Empty state */
-  .empty {
-    padding: 32px;
-    text-align: center;
-    color: var(--muted);
-    font-size: 13px;
-  }
+/* ── Status dots ── */
+.dot-active { color: var(--green); }
+.dot-paused { color: var(--yellow); }
+.dot-inactive { color: var(--muted); }
 
-  /* ── Tenant Drawer ── */
-  .tenant-drawer {
-    display: none;
-    background: var(--surface2);
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-  }
-  .tenant-drawer.open { display: table-row; }
-  .drawer-inner {
-    padding: 16px 20px;
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 20px;
-    align-items: start;
-  }
-  .drawer-section { }
-  .drawer-label {
-    font-size: 11px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 8px;
-  }
-  .drawer-sparkline {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 66px;
-  }
-  .top-queries-list {
-    list-style: none;
-    padding: 0;
-  }
-  .top-queries-list li {
-    padding: 3px 0;
-    font-size: 11px;
-    color: #a0aec0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-  }
-  .top-queries-list li:last-child { border-bottom: none; }
-  .tq-time {
-    color: var(--orange);
-    font-weight: bold;
-    margin-right: 6px;
-  }
-  @media (max-width: 900px) {
-    .drawer-inner { grid-template-columns: 1fr 1fr; }
-  }
-  @media (max-width: 600px) {
-    .drawer-inner { grid-template-columns: 1fr; }
-  }
+/* ── Latency bars ── */
+.lat-cell { display: flex; align-items: center; gap: 8px; }
+.lat-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  min-width: 36px;
+}
+.lat-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width .4s ease;
+}
+.lat-fill.warn { background: var(--yellow); }
+.lat-fill.danger { background: var(--red); }
 
-  /* ── Cost Panel ── */
-  .cost-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 0;
-  }
-  .cost-item {
-    padding: 14px 16px;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-  }
-  .cost-item:last-child { border-right: none; }
-  .cost-tenant {
-    font-size: 12px;
-    font-weight: bold;
-    color: var(--orange);
-    margin-bottom: 4px;
-  }
-  .cost-amount {
-    font-size: 22px;
-    font-weight: bold;
-    color: var(--text);
-    line-height: 1.1;
-  }
-  .cost-pct {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 2px;
-  }
-  .cost-bar {
-    height: 4px;
-    background: var(--border);
-    border-radius: 2px;
-    margin-top: 6px;
-    overflow: hidden;
-  }
-  .cost-bar-fill {
-    height: 100%;
-    border-radius: 2px;
-    background: linear-gradient(90deg, #38a169, #f6821f, #e53e3e);
-    transition: width 0.5s ease;
-  }
+/* ── Badges / Tags ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  white-space: nowrap;
+}
+.badge-blocked   { background: var(--red-bg);  color: var(--red);    border: 1px solid rgba(251,113,133,.25); }
+.badge-monitored { background: var(--yel-bg);  color: var(--yellow); border: 1px solid rgba(251,191,36,.25); }
+.badge-pending   { background: rgba(56,189,248,.10); color: var(--accent); border: 1px solid rgba(56,189,248,.25); }
+.badge-risk      { background: var(--yel-bg);  color: var(--yellow); border: 1px solid rgba(251,191,36,.25); }
+.badge-ready     { background: var(--grn-bg);  color: var(--green);  border: 1px solid rgba(52,211,153,.25); }
+.badge-applied   { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+.badge-pii       { background: var(--red-bg);  color: var(--red);    border: 1px solid rgba(251,113,133,.25); }
 
-  /* ── Anomaly / Prediction Cards ── */
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+/* ── Event rows (violations / flags / apa) ── */
+.event-list { display: flex; flex-direction: column; }
+.event-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+.event-item:last-child { border-bottom: none; }
+.event-item.is-blocked  { border-left-color: var(--red); }
+.event-item.is-monitor  { border-left-color: var(--yellow); }
+.event-item.is-risk     { border-left-color: var(--yellow); }
+.event-item.is-proposal { border-left-color: var(--green); }
+.event-item.is-pending  { border-left-color: var(--accent); }
+.event-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.event-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.event-sql {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 700px;
+}
+.event-sql.expandable { max-height: 160px; overflow: auto; white-space: pre-wrap; }
+.event-meta {
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.event-reason { font-size: 12px; color: var(--text2); }
+.event-pred { font-size: 12px; color: var(--red); }
 
-  .anomaly-item, .prediction-item {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-  }
-  .anomaly-item:last-child, .prediction-item:last-child { border-bottom: none; }
-  .anomaly-icon { font-size: 18px; flex-shrink: 0; }
-  .anomaly-body { flex: 1; }
-  .anomaly-msg { font-size: 12px; font-weight: bold; color: var(--text); }
-  .anomaly-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-  .severity-critical { color: #fc8181; }
-  .severity-warning { color: var(--yellow); }
-  .severity-info { color: var(--muted); }
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--r);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid;
+  transition: opacity .12s;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.btn:hover { opacity: .8; text-decoration: none; }
+.btn-primary  { background: var(--accent);   color: #0c0e14;       border-color: var(--accent); }
+.btn-danger   { background: var(--red-bg);   color: var(--red);    border-color: rgba(251,113,133,.3); }
+.btn-warn     { background: var(--yel-bg);   color: var(--yellow); border-color: rgba(251,191,36,.3); }
+.btn-success  { background: var(--grn-bg);   color: var(--green);  border-color: rgba(52,211,153,.3); }
+.btn-ghost    { background: var(--surface2); color: var(--text2);  border-color: var(--border); }
+.btn-download {
+  background: var(--accent);
+  color: #0c0e14;
+  border-color: var(--accent);
+  font-weight: 600;
+  padding: 5px 12px;
+}
 
-  .prediction-trend { font-size: 18px; flex-shrink: 0; }
-  .prediction-body { flex: 1; }
-  .prediction-msg { font-size: 12px; color: var(--text); }
-  .prediction-detail { font-size: 11px; color: var(--muted); margin-top: 2px; }
-  .trend-rising { color: #e53e3e; }
-  .trend-stable { color: #38a169; }
-  .trend-falling { color: #4299e1; }
+/* ── Filter input ── */
+.filter-input {
+  padding: 4px 9px;
+  font-size: 12px;
+  font-family: var(--sans);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  color: var(--text);
+  width: 180px;
+}
+.filter-input:focus { outline: none; border-color: var(--accent); }
+.filter-input::placeholder { color: var(--muted); }
 
-  /* ── Throttle Status ── */
-  .throttle-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 0;
-  }
-  .throttle-item {
-    padding: 12px 16px;
-    border-right: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .throttle-dot {
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-  .throttle-dot.active { background: #e53e3e; animation: pulse 1s infinite; }
-  .throttle-dot.clear { background: #38a169; }
-  .throttle-info { flex: 1; }
-  .throttle-tenant { font-size: 12px; font-weight: bold; color: var(--text); }
-  .throttle-detail { font-size: 11px; color: var(--muted); }
+/* ── Sparklines ── */
+.spark-wrap { display: inline-block; opacity: .8; vertical-align: bottom; }
+.conn-bar-wrap { background: var(--border); border-radius: 2px; height: 3px; margin-top: 5px; overflow: hidden; }
+.conn-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width .5s ease; }
 
-  /* ── Violations Panel ── */
-  .violation-item {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-  }
-  .violation-item:last-child { border-bottom: none; }
-  .violation-icon { font-size: 18px; flex-shrink: 0; }
-  .violation-body { flex: 1; min-width: 0; }
-  .violation-msg { font-size: 12px; font-weight: bold; color: #fc8181; }
-  .violation-query {
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    color: #a0aec0;
-    margin-top: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 600px;
-  }
-  .violation-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-  .violation-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding: 1px 6px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-weight: bold;
-    text-transform: uppercase;
-  }
-  .violation-badge.blocked {
-    background: rgba(229,62,62,0.2);
-    color: #fc8181;
-    border: 1px solid rgba(229,62,62,0.4);
-  }
-  .violation-badge.monitored {
-    background: rgba(245,197,66,0.2);
-    color: var(--yellow);
-    border: 1px solid rgba(245,197,66,0.4);
-  }
-  .violation-badge.pii {
-    background: rgba(229,62,62,0.25);
-    color: #fc8181;
-    border: 1px solid rgba(229,62,62,0.5);
-  }
-  .agent-bar-chart {
-    display: flex;
-    align-items: flex-end;
-    gap: 6px;
-    padding: 16px;
-    height: 120px;
-  }
-  .agent-bar-col {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    flex: 1;
-    min-width: 40px;
-  }
-  .agent-bar {
-    width: 100%;
-    max-width: 40px;
-    background: linear-gradient(180deg, #e53e3e, #f6821f);
-    border-radius: 3px 3px 0 0;
-    transition: height 0.5s ease;
-  }
-  .agent-bar-label {
-    font-size: 10px;
-    color: var(--muted);
-    margin-top: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 60px;
-    text-align: center;
-  }
-  .agent-bar-count {
-    font-size: 10px;
-    color: var(--orange);
-    font-weight: bold;
-    margin-bottom: 2px;
-  }
+/* ── Bar chart (violations per agent) ── */
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 28px 16px 8px; /* top padding reserves space for count labels */
+  height: 130px;
+  box-sizing: border-box;
+}
+.bar-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end; /* bars grow from the bottom */
+  flex: 1;
+  min-width: 32px;
+  height: 100%;
+  position: relative;
+}
+.bar-rect { width: 100%; max-width: 40px; background: var(--accent-dim); border: 1px solid var(--accent); border-radius: 2px 2px 0 0; transition: height .4s ease; }
+.bar-count {
+  position: absolute;
+  top: 0; /* pinned to top of the bar-col, always above the bar */
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+  font-family: var(--mono);
+  line-height: 1;
+}
+.bar-label { font-size: 11px; color: var(--muted); margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60px; text-align: center; }
 
-  /* Action Buttons */
-  .btn-block {
-    background: rgba(229,62,62,0.15);
-    border: 1px solid rgba(229,62,62,0.4);
-    color: #fc8181;
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-weight: bold;
-    cursor: pointer;
-    font-family: inherit;
-    text-transform: uppercase;
-    transition: background 0.15s;
-    white-space: nowrap;
-  }
-  .btn-block:hover {
-    background: rgba(229,62,62,0.3);
-  }
-  .btn-pause {
-    background: rgba(245,197,66,0.15);
-    border: 1px solid rgba(245,197,66,0.4);
-    color: var(--yellow);
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-weight: bold;
-    cursor: pointer;
-    font-family: inherit;
-    text-transform: uppercase;
-    transition: background 0.15s;
-    white-space: nowrap;
-  }
-  .btn-pause:hover {
-    background: rgba(245,197,66,0.3);
-  }
-  .btn-resume {
-    background: rgba(56,161,105,0.15);
-    border: 1px solid rgba(56,161,105,0.4);
-    color: var(--green);
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-weight: bold;
-    cursor: pointer;
-    font-family: inherit;
-    text-transform: uppercase;
-    transition: background 0.15s;
-    white-space: nowrap;
-  }
-  .btn-resume:hover {
-    background: rgba(56,161,105,0.3);
-  }
+/* ── Misc ── */
+.empty {
+  padding: 28px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.rank { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px; }
+.rank-1 { color: #f5c842; }
+.rank-2 { color: #9ba3b0; }
+.rank-3 { color: #b07d54; }
 
-  /* Modal */
-  .modal-overlay {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(0,0,0,0.7);
-    z-index: 1000;
-    align-items: center;
-    justify-content: center;
-  }
-  .modal-overlay.open { display: flex; }
-  .modal {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    width: 600px;
-    max-width: 90vw;
-    max-height: 80vh;
-    overflow-y: auto;
-    padding: 0;
-  }
-  .modal-header {
-    padding: 14px 20px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .modal-title {
-    font-size: 14px;
-    font-weight: bold;
-    color: var(--text);
-  }
-  .modal-close {
-    background: none;
-    border: none;
-    color: var(--muted);
-    cursor: pointer;
-    font-size: 18px;
-    padding: 2px 6px;
-  }
-  .modal-close:hover { color: var(--text); }
-  .modal-body { padding: 20px; }
-  .modal-footer {
-    padding: 14px 20px;
-    border-top: 1px solid var(--border);
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-  }
-  .modal-field {
-    margin-bottom: 14px;
-  }
-  .modal-field label {
-    display: block;
-    font-size: 11px;
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
-  }
-  .modal-field select,
-  .modal-field input {
-    width: 100%;
-    padding: 6px 10px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-family: inherit;
-    font-size: 12px;
-  }
-  .yaml-preview {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 12px;
-    font-family: 'Courier New', monospace;
-    font-size: 11px;
-    color: var(--green);
-    white-space: pre-wrap;
-    max-height: 200px;
-    overflow-y: auto;
-  }
-  .modal-info {
-    font-size: 11px;
-    color: var(--muted);
-    margin-top: 8px;
-  }
-  .btn-apply {
-    background: linear-gradient(135deg, var(--red), var(--orange));
-    border: none;
-    color: white;
-    padding: 6px 16px;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: bold;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .btn-apply:hover { opacity: 0.9; }
-  .btn-cancel {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    padding: 6px 16px;
-    border-radius: 4px;
-    font-size: 12px;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .btn-cancel:hover { color: var(--text); border-color: var(--text); }
-  .btn-create-rule {
-    background: rgba(246,130,31,0.15);
-    border: 1px solid rgba(246,130,31,0.4);
-    color: var(--orange);
-    padding: 2px 8px;
-    border-radius: 3px;
-    font-size: 10px;
-    font-weight: bold;
-    cursor: pointer;
-    font-family: inherit;
-    text-transform: uppercase;
-    transition: background 0.15s;
-    white-space: nowrap;
-  }
-  .btn-create-rule:hover { background: rgba(246,130,31,0.3); }
+/* ── Cost grid ── */
+.cost-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 0; }
+.cost-cell {
+  padding: 14px 16px;
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.cost-cell:last-child { border-right: none; }
+.cost-agent { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 3px; font-family: var(--mono); }
+.cost-amount { font-size: 22px; font-weight: 700; color: var(--text); line-height: 1.2; font-variant-numeric: tabular-nums; }
+.cost-pct { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-  /* Footer */
-  footer {
-    text-align: center;
-    padding: 20px;
-    color: var(--muted);
-    font-size: 11px;
-    border-top: 1px solid var(--border);
-    margin-top: 8px;
-  }
+/* ── Throttle ── */
+.throttle-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 0; }
+.throttle-cell { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-right: 1px solid var(--border); }
+.throttle-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.throttle-dot.active { background: var(--red); }
+.throttle-dot.clear  { background: var(--green); }
+.throttle-info { flex: 1; }
+.throttle-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.throttle-detail { font-size: 12px; color: var(--muted); }
 
-  /* ── Proxy Mode ── */
-  .proxy-overview-bar {
-    display: none;
-  }
-  body.proxy-mode .proxy-overview-bar {
-    display: block;
-  }
-  body.proxy-mode .sidecar-only {
-    display: none !important;
-  }
+/* ── Drawer ── */
+.tenant-drawer { display: none; background: var(--surface2); }
+.tenant-drawer.open { display: table-row; }
+.drawer-inner { padding: 14px 18px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .drawer-inner { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 600px) { .drawer-inner { grid-template-columns: 1fr; } }
+.drawer-label { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+.drawer-sparkline {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 8px;
+  min-height: 60px;
+  display: flex; align-items: center; justify-content: center;
+}
+.top-queries-list { list-style: none; }
+.top-queries-list li { padding: 3px 0; font-size: 12px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid var(--border); }
+.top-queries-list li:last-child { border-bottom: none; }
+.tq-time { color: var(--yellow); font-weight: 600; margin-right: 6px; font-family: var(--mono); }
 
-  /* Responsive tweaks */
-  @media (max-width: 640px) {
-    .stat-value { font-size: 22px; }
-    header { padding: 12px 14px; }
-    main { padding: 12px 10px; }
-  }
+/* ── Anomalies / Predictions ── */
+.anom-item, .pred-item { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+.anom-item:last-child, .pred-item:last-child { border-bottom: none; }
+.anom-msg { font-size: 13px; font-weight: 500; }
+.anom-meta { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.sev-critical { color: var(--red); }
+.sev-warning  { color: var(--yellow); }
+.sev-info     { color: var(--text2); }
+.trend-rising  { color: var(--red); }
+.trend-stable  { color: var(--green); }
+.trend-falling { color: var(--accent); }
+
+/* ── Modal ── */
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200; align-items: center; justify-content: center; }
+.modal-overlay.open { display: flex; }
+.modal { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; width: 560px; max-width: 92vw; max-height: 80vh; overflow-y: auto; }
+.modal-head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.modal-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.modal-close { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; padding: 2px 6px; }
+.modal-close:hover { color: var(--text); }
+.modal-body { padding: 18px; }
+.modal-foot { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; justify-content: flex-end; }
+.modal-field { margin-bottom: 14px; }
+.modal-field label { display: block; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin-bottom: 4px; }
+.modal-field select, .modal-field input { width: 100%; padding: 6px 9px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-family: var(--sans); font-size: 13px; }
+.modal-field select:focus, .modal-field input:focus { outline: none; border-color: var(--accent); }
+.yaml-preview { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: 10px 12px; font-family: var(--mono); font-size: 12px; color: var(--green); white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+.modal-info { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+/* ── Proxy-mode show/hide ── */
+.proxy-overview-bar { display: none; }
+body.proxy-mode .proxy-overview-bar { display: block; }
+body.proxy-mode .sidecar-only { display: none !important; }
+
+/* ── Separators ── */
+.sep { height: 1px; background: var(--border); margin: 8px 0; }
+
+/* ── Footer ── */
+footer {
+  text-align: center;
+  padding: 16px 20px;
+  color: var(--muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+footer a { color: var(--muted); }
+footer a:hover { color: var(--accent); }
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+  .topbar-kpis { display: none; }
+  .kpi-strip { grid-template-columns: repeat(3,1fr); }
+  main { padding: 16px 12px; }
+}
 </style>
 </head>
 <body>
 
-<header>
-  <div class="logo"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAgAAAAIACAYAAAD0eNT6AAAAAXNSR0IArs4c6QAAADhlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAAqACAAQAAAABAAACAKADAAQAAAABAAACAAAAAAAoMJe/AAAesUlEQVR4Ae3dT6te130F4H3ki5RAiGhEEWk0iFK1A4PqgZAnmQiUiQL9BErUT6FhRhn6Wzj4MxhKDJoUSowGQeCRUnugxgijFLUNiYSs07vVBkRivVb31Xve8zvreSE09dW5Z69nneu7dP+003z8al4ECBAgQIBAlMCpqLTCEiBAgAABAi8EDAAPAgECBAgQCBQwAAJLF5kAAQIECBgAngECBAgQIBAoYAAEli4yAQIECBAwADwDBAgQIEAgUMAACCxdZAIECBAgYAB4BggQIECAQKCAARBYusgECBAgQMAA8AwQIECAAIFAAQMgsHSRCRAgQICAAeAZIECAAAECgQIGQGDpIhMgQIAAAQPAM0CAAAECBAIFDIDA0kUmQIAAAQIGgGeAAAECBAgEChgAgaWLTIAAAQIEDADPAAECBAgQCBQwAAJLF5kAAQIECBgAngECBAgQIBAoYAAEli4yAQIECBAwADwDBAgQIEAgUMAACCxdZAIECBAgYAB4BggQIECAQKCAARBYusgECBAgQMAA8AwQIECAAIFAAQMgsHSRCRAgQICAAeAZIECAAAECgQIGQGDpIhMgQIAAAQPAM0CAAAECBAIFDIDA0kUmQIAAAQIGgGeAAAECBAgEChgAgaWLTIAAAQIEDADPAAECBAgQCBQwAAJLF5kAAQIECBgAngECBAgQIBAoYAAEli4yAQIECBAwADwDBAgQIEAgUMAACCxdZAIECBAgYAB4BggQIECAQKCAARBYusgECBAgQMAA8AwQIECAAIFAAQMgsHSRCRAgQICAAeAZIECAAAECgQIGQGDpIhMgQIAAAQPAM0CAAAECBAIFDIDA0kUmQIAAAQIGgGeAAAECBAgEChgAgaWLTIAAAQIEDADPAAECBAgQCBQwAAJLF5kAAQIECBgAngECBAgQIBAoYAAEli4yAQIECBAwADwDBAgQIEAgUMAACCxdZAIECBAgcISAAIH1CTx8MLe7d+Z2/97cHj9q7emT9Z1x14lOn2nt7LnWLl2e2pVrUzt/Ydr1x72NAIEDCEzz8esA93VLAgS+QuDZs7l9+MHcPv5oblv5yJyOP/dfvT61GzendnRkCHxF7f4RgYMIGAAHYXdTAn8p0D/5v//e8/bpJ3/5ti38k4tvt3br9ikjYAtlyrAJAT8DsIkahdiCQP+b/1Y/+fd+erae0YsAgXUIGADr6MEpwgX69/z7l/23/uoZe1YvAgQOL2AAHL4DJyDw4gf+tvI9/1119oz9hxu9CBA4vIABcPgOnIDAi5/2T2Hov9ngRYDA4QUMgMN34AQEXvyqXwpD/7VGLwIEDi9gABy+AycgUO73/E9SWbX/mwYnyepaAmsWMADW3I6zESBAgACBPQkYAHuC9W4JECBAgMCaBQyANbfjbAQIECBAYE8CBsCeYL1bAgQIECCwZgEDYM3tOBsBAgQIENiTgAGwJ1jvlgABAgQIrFnAAFhzO85GgAABAgT2JGAA7AnWuyVAgAABAmsWMADW3I6zESBAgACBPQkYAHuC9W4JECBAgMCaBQyANbfjbAQIECBAYE8CBsCeYL1bAgQIECCwZgEDYM3tOBsBAgQIENiTgAGwJ1jvlgABAgQIrFnAAFhzO85GgAABAgT2JHC0p/fr3a5U4OGDud29M7f79+b2+FEr9/+H/vSZ1s6ea+3S5alduTa18xemlUo7VoKAj6eElrebcZqPX9uNJ9mfBJ49m9uHH8zt44/mtpXGp+PP/VevT+3GzakdHdUeAj/76Zd/qirif/78F2+VzunjqXR9Dv9/Ar4CEPAo9H9Zvf/e8/bpJ9sK24fMr345ty9+O7dbt0+VHwHbame7aXw8bbfbtGR+BiCg8f43/6198n+5tp6tZ/QisISAj6cllN1jCQEDYAnlA96jf4+yf9l/66+esWf1IrBPAR9P+9T1vpcWMACWFl/4fv0H/rbyPf9ddD1jz+pFYJ8CPp72qet9Ly1gACwtvvD9+k/7p7ySsqZ0uracSc9YUta1PWdLnccAWEr6QPfpv+qX8krKmtLp2nImPWNJWdf2nC11HgNgKekD3efpkwPd+AC3Tcp6AF63PBZIesaSsqY+3AZAavNyEyBAgEC0gAEQXb/wBAgQIJAqYACkNi83AQIECEQLGADR9QtPgAABAqkCBkBq83ITIECAQLSAARBdv/AECBAgkCpgAKQ2LzcBAgQIRAsYANH1C0+AAAECqQIGQGrzchMgQIBAtIABEF2/8AQIECCQKmAApDYvNwECBAhECxgA0fULT4AAAQKpAgZAavNyEyBAgEC0gAEQXb/wBAgQIJAqYACkNi83AQIECEQLGADR9QtPgAABAqkCBkBq83ITIECAQLSAARBdv/AECBAgkCpgAKQ2LzcBAgQIRAsYANH1C0+AAAECqQIGQGrzchMgQIBAtIABEF2/8AQIECCQKmAApDYvNwECBAhECxgA0fULT4AAAQKpAgZAavNyEyBAgEC0gAEQXb/wBAgQIJAqYACkNi83AQIECEQLGADR9QtPgAABAqkCBkBq83ITIECAQLSAARBdv/AECBAgkCpgAKQ2LzcBAgQIRAsYANH1C0+AAAECqQIGQGrzchMgQIBAtIABEF2/8AQIECCQKmAApDYvNwECBAhECxgA0fULT4AAAQKpAgZAavNyEyBAgEC0gAEQXb/wBAgQIJAqYACkNi83AQIECEQLGADR9QtPgAABAqkCBkBq83ITIECAQLSAARBdv/AECBAgkCpgAKQ2LzcBAgQIRAsYANH1C0+AAAECqQIGQGrzchMgQIBAtIABEF2/8AQIECCQKmAApDYvNwECBAhECxgA0fULT4AAAQKpAgZAavNyEyBAgEC0gAEQXb/wBAgQIJAqYACkNi83AQIECEQLGADR9QtPgAABAqkCBkBq83ITIECAQLSAARBdv/AECBAgkCpgAKQ2LzcBAgQIRAsYANH1C0+AAAECqQIGQGrzchMgQIBAtIABEF2/8AQIECCQKmAApDYvNwECBAhECxgA0fULT4AAAQKpAgZAavNyEyBAgEC0gAEQXb/wBAgQIJAqYACkNi83AQIECEQLGADR9QtPgAABAqkCBkBq83ITIECAQLSAARBdv/AECBAgkCpgAKQ2LzcBAgQIRAsYANH1C0+AAAECqQIGQGrzchMgQIBAtIABEF2/8AQIECCQKmAApDYvNwECBAhECxgA0fULT4AAAQKpAgZAavNyEyBAgEC0gAEQXb/wBAgQIJAqYACkNi83AQIECEQLGADR9QtPgAABAqkCBkBq83ITIECAQLSAARBdv/AECBAgkCpgAKQ2LzcBAgQIRAsYANH1C0+AAAECqQIGQGrzchMgQIBAtIABEF2/8AQIECCQKmAApDYvNwECBAhECxgA0fULT4AAAQKpAgZAavNyEyBAgEC0gAEQXb/w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" style="height:24px; vertical-align:middle; margin-right:8px;">FaultWall</div>
-  <div class="header-meta">
-    <span class="badge pattern-badge">
-      <span id="pattern-text">{{.Pattern}}</span>
+<!-- ── Topbar ── -->
+<header class="topbar">
+  <div class="topbar-brand">
+    <span class="logo-mark">FW</span>
+    <span class="logo-name">FaultWall</span>
+  </div>
+
+  <div class="topbar-kpis">
+    <div class="kpi">
+      <span class="kpi-value" id="po-agents">—</span>
+      <span class="kpi-label">Agents</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-value" id="po-queries">—</span>
+      <span class="kpi-label">Queries</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-value" id="po-violations">—</span>
+      <span class="kpi-label">Violations</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-value" id="po-uptime">—</span>
+      <span class="kpi-label">Uptime</span>
+    </div>
+  </div>
+
+  <div class="topbar-right">
+    <span class="pattern-tag" id="pattern-text">{{.Pattern}}</span>
+
+    <span class="enforce-badge {{if eq .Enforcement "enforce"}}enforce{{else}}monitor{{end}}" id="enforcement-badge">
+      {{if eq .Enforcement "enforce"}}ENFORCE{{else}}MONITOR{{end}}
     </span>
-    <span class="badge" id="enforcement-badge" style="{{if eq .Enforcement "enforce"}}background: linear-gradient(135deg, rgba(229,62,62,0.15), rgba(229,62,62,0.25)); border-color: rgba(229,62,62,0.4); color: #e53e3e;{{else}}background: linear-gradient(135deg, rgba(246,173,31,0.15), rgba(246,173,31,0.25)); border-color: rgba(246,173,31,0.4); color: #f6ad1f;{{end}} font-weight: bold;">
-      {{if eq .Enforcement "enforce"}}🛡️ enforce{{else}}👁️ monitor{{end}}
-    </span>
-    <span class="badge">
-      <span class="dot" id="status-dot"></span>
+
+    <span class="live-indicator">
+      <span class="live-dot" id="status-dot"></span>
       <span id="status-text">connecting…</span>
     </span>
-    <div class="export-btns">
-      <a href="/api/export/csv" class="export-btn" title="Download CSV">📥 CSV</a>
-      <a href="/api/export/json" class="export-btn" title="Download JSON">📥 JSON</a>
-    </div>
-    <span class="refresh-indicator" id="refresh-label">⟳ refreshing…</span>
+    <span class="refresh-label" id="refresh-label"></span>
+
+    <button class="theme-btn" id="theme-toggle" title="Toggle theme" onclick="toggleTheme()">◐</button>
+    <a href="/api/export/csv"  class="icon-btn" title="Download CSV">↓ CSV</a>
+    <a href="/api/export/json" class="icon-btn" title="Download JSON">↓ JSON</a>
   </div>
 </header>
 
+<!-- ── Alert Banner ── -->
+<div id="alert-banner"></div>
+
 <main>
 
-  <!-- Alert Banner -->
-  <div id="alert-banner"></div>
-
-  <!-- Proxy Overview Bar (visible only in proxy mode) -->
-  <div class="card proxy-overview-bar" id="proxy-overview-bar">
-    <div class="stats-grid">
-      <div class="stat-box">
-        <div class="stat-value" id="po-enforcement" style="font-size:18px;">{{if eq .Enforcement "enforce"}}🛡️ ENFORCE{{else}}👁️ MONITOR{{end}}</div>
-        <div class="stat-label">Enforcement</div>
+  <!-- Overview KPI strip (proxy mode) -->
+  <div class="proxy-overview-bar" id="proxy-overview-bar">
+    <div class="kpi-strip">
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="po-enforcement">
+          {{if eq .Enforcement "enforce"}}ENFORCE{{else}}MONITOR{{end}}
+        </div>
+        <div class="kpi-cell-label">Mode</div>
       </div>
-      <div class="stat-box">
-        <div class="stat-value" id="po-agents">—</div>
-        <div class="stat-label">Active Agents</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="po-queries">—</div>
-        <div class="stat-label">Total Queries</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="po-violations">—</div>
-        <div class="stat-label">Violations</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="po-uptime">—</div>
-        <div class="stat-label">Uptime</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Agent Stats -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">📈 Agent Stats</span>
-      <span class="card-subtitle" id="agent-stats-subtitle">Per-agent query, row, and cost metrics</span>
-    </div>
-    <div class="table-wrap">
-      <table id="agent-stats-table">
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th class="num">Queries</th>
-            <th class="num">Rows</th>
-            <th class="num">Est. Cost</th>
-            <th class="num">Total Duration</th>
-            <th class="num">Avg Duration</th>
-            <th class="num">Violations</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="agent-stats-tbody">
-          <tr><td colspan="8" class="empty">Loading agent stats…</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Policy Violations -->
-  <div class="two-col">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">🚨 Policy Violations</span>
-        <span class="card-subtitle" id="violation-count">—</span>
-        <input type="text" id="violation-filter" placeholder="Filter by agent or reason…" style="margin-left:auto; padding:4px 8px; font-size:11px; background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--fg); width:200px;">
-      </div>
-      <div id="violation-list">
-        <div class="empty">No policy violations detected</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">📊 Violations per Agent</span>
-        <span class="card-subtitle">Bar chart</span>
-      </div>
-      <div id="violation-chart">
-        <div class="empty">No violation data</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- QWM Risk Flags (observe-only) -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">⚡ QWM Risk Flags</span>
-      <span class="card-subtitle" id="qwm-flag-count">—</span>
-      <span class="card-subtitle" style="margin-left:8px; color:var(--muted);">observe-only — these queries were scored risky but NOT blocked</span>
-      <input type="text" id="qwm-filter" placeholder="Filter by agent…" style="margin-left:auto; padding:4px 8px; font-size:11px; background:var(--bg); border:1px solid var(--border); border-radius:4px; color:var(--fg); width:180px;">
-    </div>
-    <div id="qwm-flag-list">
-      <div class="empty">No QWM flags yet. QWM scores queries in shadow mode; flags appear when a query exceeds the risk threshold.</div>
-    </div>
-  </div>
-
-  <!-- APA Proposals (Autonomous Policy Author) -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">🧠 APA Proposals</span>
-      <span class="card-subtitle" id="apa-pending-count">—</span>
-      <span class="card-subtitle" style="margin-left:8px; color:var(--muted);">what APA is proposing for your policy — review-gated, nothing auto-enforced</span>
-    </div>
-    <div id="apa-list">
-      <div class="empty">No APA activity yet. Run <code>faultwall apa sync</code> then <code>faultwall apa run</code> to generate proposals.</div>
-    </div>
-  </div>
-
-  <!-- Connected Agents -->
-  <div class="card">
-    <div class="card-header">
-      <span class="card-title">🤖 Connected Agents</span>
-      <span class="card-subtitle" id="agent-conn-count">—</span>
-    </div>
-    <div class="table-wrap">
-      <table id="agent-conn-table">
-        <thead>
-          <tr>
-            <th>Agent</th>
-            <th>Last Mission</th>
-            <th>Status</th>
-            <th>Activity</th>
-            <th>Last Seen</th>
-            <th>User</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody id="agent-conn-tbody">
-          <tr><td colspan="7" class="empty">No agent connections detected</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <!-- Overview -->
-  <div class="card sidecar-only" id="overview-card">
-    <div class="card-header">
-      <span class="card-title">📊 Resource Overview</span>
-      <span class="card-subtitle" id="collected-at"></span>
-    </div>
-    <div class="stats-grid" id="overview-stats">
-      <div class="stat-box">
-        <div class="stat-value" id="ov-connections">—</div>
-        <div class="stat-label">Connections</div>
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-connections">—</div>
+        <div class="kpi-cell-label">Connections</div>
         <div class="conn-bar-wrap"><div class="conn-bar" id="conn-bar" style="width:0%"></div></div>
-        <div class="stat-sub" id="ov-max-conn"></div>
-        <div class="sparkline-wrap" id="spark-connections"></div>
+        <div class="kpi-cell-sub" id="ov-max-conn"></div>
       </div>
-      <div class="stat-box">
-        <div class="stat-value" id="ov-qps">—</div>
-        <div class="stat-label">Queries / sec</div>
-        <div class="sparkline-wrap" id="spark-qps"></div>
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-qps">—</div>
+        <div class="kpi-cell-label">Queries / sec</div>
+        <div class="spark-wrap" id="spark-qps"></div>
       </div>
-      <div class="stat-box">
-        <div class="stat-value" id="ov-cache">—</div>
-        <div class="stat-label">Cache Hit %</div>
-        <div class="sparkline-wrap" id="spark-cache"></div>
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-cache">—</div>
+        <div class="kpi-cell-label">Cache Hit %</div>
+        <div class="spark-wrap" id="spark-cache"></div>
       </div>
-      <div class="stat-box">
-        <div class="stat-value" id="ov-tenants">{{.Tenants}}</div>
-        <div class="stat-label">Tenants</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-value" id="ov-dbsize">—</div>
-        <div class="stat-label">DB Size</div>
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-dbsize">—</div>
+        <div class="kpi-cell-label">DB Size</div>
+        <div class="kpi-cell-sub" id="collected-at"></div>
       </div>
     </div>
   </div>
 
-  <!-- Tenant Leaderboard -->
-  <div class="card sidecar-only">
-    <div class="card-header">
-      <span class="card-title">🏆 Tenant Leaderboard</span>
-      <span class="card-subtitle">Click row to expand · Click headers to sort</span>
+  <!-- ── Policy Violations ── -->
+  <div class="section" id="violations">
+    <div class="section-head">
+      <span class="section-title">Policy Violations</span>
+      <span class="section-count" id="violation-count">—</span>
+      <span class="section-note">blocked and monitored queries</span>
+      <div class="section-actions">
+        <input type="text" id="violation-filter" class="filter-input" placeholder="Filter by agent, reason…">
+      </div>
     </div>
-    <div class="table-wrap">
-      <table id="tenant-table">
-        <thead>
-          <tr>
-            <th onclick="sortTable('tenant-table',0)" data-col="0"># <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',1)" data-col="1">Tenant <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',2)" data-col="2" class="num">Queries <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',3)" data-col="3" class="num">Avg ms <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',4)" data-col="4" class="num">P50 ms <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',5)" data-col="5" class="num">P95 ms <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',6)" data-col="6" class="num">P99 ms <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',7)" data-col="7" class="num">Rows Read <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',8)" data-col="8" class="num">Conns <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('tenant-table',9)" data-col="9" class="num">I/O <span class="sort-arrow">↕</span></th>
-          </tr>
-        </thead>
-        <tbody id="tenant-tbody">
-          <tr><td colspan="10" class="empty">Loading tenant data…</td></tr>
-        </tbody>
-      </table>
+
+    <div class="two-col" style="margin-top:12px;">
+      <div class="card">
+        <div class="event-list" id="violation-list">
+          <div class="empty">No policy violations detected</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="card-title">By Agent</span>
+          <span class="card-sub">violation distribution</span>
+        </div>
+        <div id="violation-chart"><div class="empty">No data</div></div>
+      </div>
     </div>
   </div>
 
-  <!-- Top Slow Queries -->
-  <div class="card sidecar-only">
-    <div class="card-header">
-      <span class="card-title">🐌 Top Slow Queries</span>
-      <span class="card-subtitle">Ranked by avg execution time</span>
+  <!-- ── QWM Risk Flags ── -->
+  <div class="section" id="qwm-section">
+    <div class="section-head">
+      <span class="section-title">QWM Risk Flags</span>
+      <span class="section-count" id="qwm-flag-count">—</span>
+      <span class="section-note">observe-only — scored risky, not blocked</span>
+      <div class="section-actions">
+        <input type="text" id="qwm-filter" class="filter-input" placeholder="Filter by agent…">
+      </div>
     </div>
-    <div class="table-wrap">
-      <table id="query-table">
-        <thead>
-          <tr>
-            <th data-col="0"># <span class="sort-arrow"></span></th>
-            <th onclick="sortTable('query-table',1)" data-col="1">Query <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('query-table',2)" data-col="2">Tenant <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('query-table',3)" data-col="3" class="num">Avg ms <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('query-table',4)" data-col="4" class="num">Calls <span class="sort-arrow">↕</span></th>
-            <th onclick="sortTable('query-table',5)" data-col="5" class="num">Rows <span class="sort-arrow">↕</span></th>
-          </tr>
-        </thead>
-        <tbody id="query-tbody">
-          <tr><td colspan="6" class="empty">Loading query data…</td></tr>
-        </tbody>
-      </table>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="event-list" id="qwm-flag-list">
+        <div class="empty">No QWM flags yet. Flags appear when a query exceeds the risk threshold (score &gt; 0.7).</div>
+      </div>
     </div>
   </div>
 
-  <!-- Cost Attribution -->
-  <div class="card sidecar-only">
-    <div class="card-header">
-      <span class="card-title">💰 Cost per Tenant</span>
-      <span class="card-subtitle">Estimated monthly cost allocation based on query time · Default: $0.50/hr (set RDS_HOURLY_COST to adjust)</span>
+  <!-- ── APA Policy Proposals ── -->
+  <div class="section" id="apa-section">
+    <div class="section-head">
+      <span class="section-title">APA · Policy Proposals</span>
+      <span class="section-count" id="apa-pending-count">—</span>
+      <span class="section-note">human-reviewed — nothing auto-applied</span>
+      <div class="section-actions">
+        <a href="/api/policies/yaml" class="btn btn-download" download="policies.yaml" title="Download the current active policies.yaml">
+          ↓ Current Policy YAML
+        </a>
+      </div>
     </div>
-    <div class="cost-grid" id="cost-grid">
-      <div class="empty">Loading cost data…</div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="event-list" id="apa-list">
+        <div class="empty">No APA proposals yet. Run <code>faultwall apa sync</code> then <code>faultwall apa run</code> to generate proposals.</div>
+      </div>
     </div>
   </div>
 
-  <!-- Anomalies + Predictions (side by side) -->
+  <!-- ── Connected Agents ── -->
+  <div class="section" id="agents-section">
+    <div class="section-head">
+      <span class="section-title">Connected Agents</span>
+      <span class="section-count" id="agent-conn-count">—</span>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="table-wrap">
+        <table id="agent-conn-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Last Mission</th>
+              <th>Status</th>
+              <th>Activity</th>
+              <th>Last Seen</th>
+              <th>User</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="agent-conn-tbody">
+            <tr><td colspan="7" class="empty">No agent connections detected</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Agent Stats ── -->
+  <div class="section" id="stats-section">
+    <div class="section-head">
+      <span class="section-title">Agent Stats</span>
+      <span class="section-note" id="agent-stats-subtitle">per-agent query, row, and cost metrics</span>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="table-wrap">
+        <table id="agent-stats-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th class="num">Queries</th>
+              <th class="num">Rows</th>
+              <th class="num">Est. Cost</th>
+              <th class="num">Total ms</th>
+              <th class="num">Avg ms</th>
+              <th class="num">Violations</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="agent-stats-tbody">
+            <tr><td colspan="8" class="empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Resource Overview (sidecar only) ── -->
+  <div class="section sidecar-only" id="overview-card">
+    <div class="section-head">
+      <span class="section-title">Resource Overview</span>
+      <span class="section-count">{{.Tenants}} tenants</span>
+      <span class="section-note" id="ov-tenants"></span>
+    </div>
+    <div class="kpi-strip" style="margin-top:12px;">
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-connections-sc">—</div>
+        <div class="kpi-cell-label">Connections</div>
+        <div class="conn-bar-wrap"><div class="conn-bar" id="conn-bar-sc" style="width:0%"></div></div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-qps-sc">—</div>
+        <div class="kpi-cell-label">Queries / sec</div>
+        <div class="spark-wrap" id="spark-connections"></div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-cache-sc">—</div>
+        <div class="kpi-cell-label">Cache Hit %</div>
+        <div class="spark-wrap" id="spark-cache-sc"></div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-cell-value" id="ov-dbsize-sc">—</div>
+        <div class="kpi-cell-label">DB Size</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Tenant Leaderboard (sidecar only) ── -->
+  <div class="section sidecar-only">
+    <div class="section-head">
+      <span class="section-title">Tenant Leaderboard</span>
+      <span class="section-note">click row to expand · click headers to sort</span>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="table-wrap">
+        <table id="tenant-table">
+          <thead>
+            <tr>
+              <th onclick="sortTable('tenant-table',0)" data-col="0"># <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',1)" data-col="1">Tenant <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',2)" data-col="2" class="num">Queries <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',3)" data-col="3" class="num">Avg ms <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',4)" data-col="4" class="num">P50 <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',5)" data-col="5" class="num">P95 <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',6)" data-col="6" class="num">P99 <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',7)" data-col="7" class="num">Rows <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',8)" data-col="8" class="num">Conns <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('tenant-table',9)" data-col="9" class="num">I/O <span class="sort-arrow">↕</span></th>
+            </tr>
+          </thead>
+          <tbody id="tenant-tbody">
+            <tr><td colspan="10" class="empty">Loading tenant data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Top Slow Queries (sidecar only) ── -->
+  <div class="section sidecar-only">
+    <div class="section-head">
+      <span class="section-title">Top Slow Queries</span>
+      <span class="section-note">ranked by avg execution time</span>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="table-wrap">
+        <table id="query-table">
+          <thead>
+            <tr>
+              <th data-col="0">#</th>
+              <th onclick="sortTable('query-table',1)" data-col="1">Query <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('query-table',2)" data-col="2">Tenant <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('query-table',3)" data-col="3" class="num">Avg ms <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('query-table',4)" data-col="4" class="num">Calls <span class="sort-arrow">↕</span></th>
+              <th onclick="sortTable('query-table',5)" data-col="5" class="num">Rows <span class="sort-arrow">↕</span></th>
+            </tr>
+          </thead>
+          <tbody id="query-tbody">
+            <tr><td colspan="6" class="empty">Loading query data…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Cost per Agent (sidecar only) ── -->
+  <div class="section sidecar-only">
+    <div class="section-head">
+      <span class="section-title">Cost per Tenant</span>
+      <span class="section-note">estimated monthly · default $0.50/hr (set RDS_HOURLY_COST to adjust)</span>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="cost-grid" id="cost-grid">
+        <div class="empty">Loading cost data…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Anomalies + Predictions (sidecar only) ── -->
   <div class="two-col sidecar-only">
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">🔥 Active Anomalies</span>
-        <span class="card-subtitle" id="anomaly-count">—</span>
+    <div class="section">
+      <div class="section-head">
+        <span class="section-title">Active Anomalies</span>
+        <span class="section-count" id="anomaly-count">—</span>
       </div>
-      <div id="anomaly-list">
-        <div class="empty">Building baselines… anomalies appear after ~2 minutes</div>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">🔮 Predictions</span>
-        <span class="card-subtitle">Trend analysis &amp; breach forecasts</span>
-      </div>
-      <div id="prediction-list">
-        <div class="empty">Collecting data for predictions…</div>
+      <div class="card" style="margin-top:12px;">
+        <div id="anomaly-list"><div class="empty">Building baselines…</div></div>
       </div>
     </div>
-  </div>
-
-  <!-- Throttle Status -->
-  <div class="card sidecar-only">
-    <div class="card-header">
-      <span class="card-title">🛡️ Throttle Status</span>
-      <span class="card-subtitle" id="throttle-status">Monitoring</span>
-    </div>
-    <div class="throttle-grid" id="throttle-grid">
-      <div class="empty">No active throttling</div>
+    <div class="section">
+      <div class="section-head">
+        <span class="section-title">Predictions</span>
+        <span class="section-note">trend analysis &amp; breach forecasts</span>
+      </div>
+      <div class="card" style="margin-top:12px;">
+        <div id="prediction-list"><div class="empty">Collecting data…</div></div>
+      </div>
     </div>
   </div>
 
+  <!-- ── Throttle (sidecar only) ── -->
+  <div class="section sidecar-only">
+    <div class="section-head">
+      <span class="section-title">Throttle Status</span>
+      <span class="section-count" id="throttle-status">—</span>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="throttle-grid" id="throttle-grid">
+        <div class="empty">No active throttling</div>
+      </div>
+    </div>
+  </div>
 
 </main>
 
-<!-- Rule Creation Modal -->
+<!-- Rule creation modal -->
 <div class="modal-overlay" id="rule-modal">
   <div class="modal">
-    <div class="modal-header">
+    <div class="modal-head">
       <span class="modal-title">Create Policy Rule</span>
       <button class="modal-close" onclick="closeRuleModal()">&times;</button>
     </div>
@@ -1109,7 +1065,7 @@
       </div>
       <div class="modal-field">
         <label>Source Query</label>
-        <div class="yaml-preview" id="rule-query" style="color: var(--muted);"></div>
+        <div class="yaml-preview" id="rule-query" style="color:var(--text2);"></div>
       </div>
       <div class="modal-field">
         <label>Action</label>
@@ -1125,30 +1081,40 @@
       </div>
       <div class="modal-info" id="rule-pii-info"></div>
     </div>
-    <div class="modal-footer">
-      <button class="btn-cancel" onclick="closeRuleModal()">Cancel</button>
-      <button class="btn-apply" onclick="applyRule()">Apply Rule</button>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeRuleModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="applyRule()">Apply Rule</button>
     </div>
   </div>
 </div>
 
 <footer>
-  FaultWall · Multi-tenant PostgreSQL observability ·
-  <a href="/api/health" target="_blank">/health</a> ·
-  <a href="/api/anomalies" target="_blank">/anomalies</a> ·
-  <a href="/api/predictions" target="_blank">/predictions</a> ·
-  <a href="/api/costs" target="_blank">/costs</a> ·
-  <a href="/api/throttle/status" target="_blank">/throttle</a> ·
-  <a href="/api/agents/status" target="_blank">/agents</a> ·
-  <a href="/api/violations" target="_blank">/violations</a> ·
-  <a href="/api/qwm/flags" target="_blank">/qwm/flags</a> ·
-  <a href="/api/apa/proposals" target="_blank">/apa/proposals</a> ·
-  <a href="/api/apa/proposals/files" target="_blank">/apa/proposals/files</a> ·
-  <a href="/api/policies" target="_blank">/policies</a> ·
-  <a href="/api/firewall/agents" target="_blank">/firewall</a>
+  FaultWall · PostgreSQL L7 firewall ·
+  <a href="/api/health">/health</a> ·
+  <a href="/api/violations">/violations</a> ·
+  <a href="/api/qwm/flags">/qwm/flags</a> ·
+  <a href="/api/apa/proposals">/apa/proposals</a> ·
+  <a href="/api/apa/proposals/files">/proposals/files</a> ·
+  <a href="/api/policies">/policies</a> ·
+  <a href="/api/firewall/agents">/firewall/agents</a> ·
+  <a href="/api/anomalies">/anomalies</a> ·
+  <a href="/api/costs">/costs</a>
 </footer>
 
 <script>
+// ── Theme ──────────────────────────────────────────────────────────────
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = (current === 'dark' || (!current && window.matchMedia('(prefers-color-scheme: dark)').matches)) ? 'light' : 'dark';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('fw-theme', next);
+}
+(function() {
+  const saved = localStorage.getItem('fw-theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
 // ── State ──────────────────────────────────────────────────────────────
 let sortState = {};
 let maxP99 = 1;
@@ -1171,43 +1137,38 @@ function fmtNum(n) {
   if (n >= 1e3) return (n/1e3).toFixed(1)+'K';
   return Number(n).toFixed(0);
 }
-
 function fmtMs(ms) {
-  if (ms == null || ms === 0) return '<span style="color:var(--muted);font-size:11px">collecting…</span>';
+  if (ms == null || ms === 0) return '<span style="color:var(--muted);font-size:12px">—</span>';
   if (ms >= 1000) return (ms/1000).toFixed(2)+'s';
   return ms.toFixed(1)+'ms';
 }
-
 function fmtBytes(b) {
   if (!b || b === 0) return '—';
   if (b >= 1073741824) return (b/1073741824).toFixed(1)+' GB';
-  if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
-  if (b >= 1024) return (b/1024).toFixed(1)+' KB';
+  if (b >= 1048576)    return (b/1048576).toFixed(1)+' MB';
+  if (b >= 1024)       return (b/1024).toFixed(1)+' KB';
   return b+' B';
 }
-
 function timeAgo(ts) {
   const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
-  if (s < 60) return s+'s ago';
+  if (s < 60)   return s+'s ago';
   if (s < 3600) return Math.floor(s/60)+'m ago';
   return Math.floor(s/3600)+'h ago';
 }
-
-function rankEmoji(i) {
-  if (i === 0) return '<span class="rank rank-1">🥇</span>';
-  if (i === 1) return '<span class="rank rank-2">🥈</span>';
-  if (i === 2) return '<span class="rank rank-3">🥉</span>';
+function rankLabel(i) {
+  if (i === 0) return '<span class="rank rank-1">1</span>';
+  if (i === 1) return '<span class="rank rank-2">2</span>';
+  if (i === 2) return '<span class="rank rank-3">3</span>';
   return `<span class="rank">${i+1}</span>`;
 }
-
-function miniBar(val, maxVal, danger) {
+function latCell(val, maxVal, level) {
   const pct = maxVal > 0 ? Math.min(100, (val/maxVal)*100) : 0;
-  return `<div class="latency-cell">
-    <span>${fmtMs(val)}</span>
-    <div class="mini-bar"><div class="mini-bar-fill${danger?' danger':''}" style="width:${pct}%"></div></div>
+  const cls = level === 'danger' ? 'danger' : level === 'warn' ? 'warn' : '';
+  return `<div class="lat-cell">
+    <span style="font-variant-numeric:tabular-nums;font-size:12px">${val ? (val>=1000?(val/1000).toFixed(2)+'s':val.toFixed(1)+'ms') : '—'}</span>
+    <div class="lat-bar"><div class="lat-fill ${cls}" style="width:${pct}%"></div></div>
   </div>`;
 }
-
 function escHtml(s) {
   return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
@@ -1219,20 +1180,15 @@ function buildSparkline(points, color, width, height) {
   const minV = Math.min(...vals);
   const maxV = Math.max(...vals);
   const range = maxV - minV || 1;
-  const W = width || 120;
-  const H = height || 50;
-  const xs = vals.map((_, i) => (i / (vals.length - 1)) * W);
-  const ys = vals.map(v => H - ((v - minV) / range) * (H - 6) - 3);
+  const W = width || 120; const H = height || 46;
+  const xs = vals.map((_, i) => (i / (vals.length-1)) * W);
+  const ys = vals.map(v => H - ((v-minV)/range)*(H-6)-3);
   const pts = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
-  const gradId = 'sg' + Math.random().toString(36).slice(2, 7);
+  const apts = [...xs.map((x,i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`), `${W},${H}`, `0,${H}`].join(' ');
   return `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-    <defs>
-      <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="0">
-        <stop offset="0%" stop-color="${color}" stop-opacity="0.4"/>
-        <stop offset="100%" stop-color="${color}" stop-opacity="1"/>
-      </linearGradient>
-    </defs>
-    <polyline points="${pts}" fill="none" stroke="url(#${gradId})" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <polygon points="${apts}" fill="${color}" opacity=".12"/>
+    <polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${xs[xs.length-1].toFixed(1)}" cy="${ys[ys.length-1].toFixed(1)}" r="2.5" fill="${color}"/>
   </svg>`;
 }
 
@@ -1241,39 +1197,48 @@ async function refreshAlerts() {
   try {
     const alerts = await fetchJSON('/api/alerts');
     const banner = document.getElementById('alert-banner');
-    if (!alerts || alerts.length === 0) {
-      banner.style.display = 'none';
-      return;
-    }
+    if (!alerts || alerts.length === 0) { banner.style.display='none'; return; }
     const active = alerts.filter(a => !dismissedAlerts.has(a.id));
-    if (active.length === 0) {
-      banner.style.display = 'none';
-      return;
-    }
+    if (active.length === 0) { banner.style.display='none'; return; }
     banner.style.display = 'block';
-    banner.innerHTML = active.map(a => {
-      const icon = a.level === 'critical' ? '🔴' : a.level === 'warning' ? '⚠️' : 'ℹ️';
-      return `<div class="alert-item ${a.level}" id="alert-${a.id}">
-        <span class="alert-icon">${icon}</span>
-        <div class="alert-content">
-          <div class="alert-msg">${escHtml(a.message)}</div>
-          <div class="alert-meta">Level: ${a.level} · Tenant: ${escHtml(a.tenant_id)} · ${timeAgo(a.fired_at)}</div>
-        </div>
-        <button class="alert-dismiss" onclick="dismissAlert('${a.id}')" title="Dismiss">✕</button>
-      </div>`;
-    }).join('');
-  } catch (e) {
-    // alerts not critical — silently ignore
-  }
+    banner.innerHTML = active.map(a => `<div class="alert-item ${a.level}" id="alert-${a.id}">
+      <div class="alert-content">
+        <div class="alert-msg">${escHtml(a.message)}</div>
+        <div class="alert-meta">${a.level} · tenant ${escHtml(a.tenant_id)} · ${timeAgo(a.fired_at)}</div>
+      </div>
+      <button class="alert-dismiss" onclick="dismissAlert('${a.id}')">&times;</button>
+    </div>`).join('');
+  } catch(e) { /* alerts optional */ }
 }
-
 function dismissAlert(id) {
   dismissedAlerts.add(id);
-  const el = document.getElementById('alert-' + id);
+  const el = document.getElementById('alert-'+id);
   if (el) el.remove();
   const banner = document.getElementById('alert-banner');
-  if (banner && !banner.querySelector('.alert-item')) {
-    banner.style.display = 'none';
+  if (banner && !banner.querySelector('.alert-item')) banner.style.display='none';
+}
+
+// ── Render Overview ────────────────────────────────────────────────────
+function renderOverview(ov) {
+  // proxy bar IDs
+  const setEl = (id, v) => { const e = document.getElementById(id); if(e) e.textContent = v; };
+  setEl('ov-connections', ov.total_connections ?? '—');
+  setEl('ov-qps', ov.queries_per_sec != null ? ov.queries_per_sec.toFixed(1) : '—');
+  setEl('ov-cache', ov.cache_hit_ratio != null ? ov.cache_hit_ratio.toFixed(1)+'%' : '—');
+  setEl('ov-dbsize', ov.db_size || '—');
+  // sidecar aliases
+  setEl('ov-connections-sc', ov.total_connections ?? '—');
+  setEl('ov-qps-sc', ov.queries_per_sec != null ? ov.queries_per_sec.toFixed(1) : '—');
+  setEl('ov-cache-sc', ov.cache_hit_ratio != null ? ov.cache_hit_ratio.toFixed(1)+'%' : '—');
+  setEl('ov-dbsize-sc', ov.db_size || '—');
+  if (ov.collected_at) {
+    const d = new Date(ov.collected_at);
+    setEl('collected-at', 'as of '+d.toLocaleTimeString());
+  }
+  if (ov.max_connections && ov.total_connections) {
+    const pct = (ov.total_connections/ov.max_connections*100).toFixed(0);
+    ['conn-bar','conn-bar-sc'].forEach(id => { const e=document.getElementById(id); if(e) e.style.width=pct+'%'; });
+    setEl('ov-max-conn', `of ${ov.max_connections} max`);
   }
 }
 
@@ -1282,137 +1247,45 @@ async function refreshSparklines() {
   try {
     const pts = await fetchJSON('/api/history/overview?period=1h');
     if (!pts || pts.length < 2) return;
-    const connPts = pts.map(p => ({value: p.connections}));
-    const qpsPts  = pts.map(p => ({value: p.qps}));
-    const cachePts = pts.map(p => ({value: p.cache_hit}));
-    document.getElementById('spark-connections').innerHTML = buildSparkline(connPts, '#f6821f', 120, 50);
-    document.getElementById('spark-qps').innerHTML = buildSparkline(qpsPts, '#38a169', 120, 50);
-    document.getElementById('spark-cache').innerHTML = buildSparkline(cachePts, '#f5c542', 120, 50);
-  } catch(e) { /* sparklines are optional */ }
-}
-
-// ── Render Overview ────────────────────────────────────────────────────
-function renderOverview(ov) {
-  document.getElementById('ov-connections').textContent = ov.total_connections ?? '—';
-  document.getElementById('ov-qps').textContent = ov.queries_per_sec != null
-    ? ov.queries_per_sec.toFixed(1) : '—';
-  document.getElementById('ov-cache').textContent = ov.cache_hit_ratio != null
-    ? ov.cache_hit_ratio.toFixed(1)+'%' : '—';
-  document.getElementById('ov-dbsize').textContent = ov.db_size || '—';
-  if (ov.collected_at) {
-    const d = new Date(ov.collected_at);
-    document.getElementById('collected-at').textContent =
-      'as of ' + d.toLocaleTimeString();
-  }
-  if (ov.max_connections && ov.total_connections) {
-    const pct = (ov.total_connections / ov.max_connections * 100).toFixed(0);
-    document.getElementById('conn-bar').style.width = pct+'%';
-    document.getElementById('ov-max-conn').textContent = `of ${ov.max_connections} max`;
-  }
+    const setSpk = (id, data, color) => { const e=document.getElementById(id); if(e) e.innerHTML=buildSparkline(data,color,120,44); };
+    setSpk('spark-qps',         pts.map(p=>({value:p.qps})),       'var(--green)');
+    setSpk('spark-cache',       pts.map(p=>({value:p.cache_hit})), 'var(--accent)');
+    setSpk('spark-connections', pts.map(p=>({value:p.connections})),'var(--yellow)');
+    setSpk('spark-cache-sc',    pts.map(p=>({value:p.cache_hit})), 'var(--accent)');
+  } catch(e) { /* optional */ }
 }
 
 // ── Tenant Drawer ──────────────────────────────────────────────────────
 async function openTenantDrawer(tenantID, drawerRow) {
   const existing = document.querySelector('.tenant-drawer.open');
   if (existing) {
-    existing.classList.remove('open');
-    existing.style.display = 'none';
-    const prevTenant = existing.getAttribute('data-tenant');
-    if (prevTenant === tenantID) {
-      activeDrawerTenant = null;
-      return;
-    }
+    existing.classList.remove('open'); existing.style.display='none';
+    const prev = existing.getAttribute('data-tenant');
+    if (prev === tenantID) { activeDrawerTenant=null; return; }
   }
-
   activeDrawerTenant = tenantID;
-  drawerRow.classList.remove('open');
   drawerRow.setAttribute('data-tenant', tenantID);
-  drawerRow.classList.add('open');
-  drawerRow.style.display = 'table-row';
-
+  drawerRow.classList.add('open'); drawerRow.style.display='table-row';
   const td = drawerRow.querySelector('td');
-  td.innerHTML = '<div class="drawer-inner"><div class="drawer-section" style="grid-column:1/-1"><span style="color:var(--muted)">Loading…</span></div></div>';
-
+  td.innerHTML = '<div class="drawer-inner"><div style="color:var(--muted);font-size:13px">Loading…</div></div>';
   try {
     const [qPts, p99Pts] = await Promise.all([
       fetchJSON(`/api/history?tenant=${encodeURIComponent(tenantID)}&metric=queries&period=1h`),
       fetchJSON(`/api/history?tenant=${encodeURIComponent(tenantID)}&metric=p99_ms&period=1h`),
     ]);
-
-    // Top 5 queries for this tenant from last fetched data
-    const tenantQueries = lastQueriesData
-      .filter(q => q.tenant_id === tenantID)
-      .slice(0, 5);
-
-    const qSparkSvg = buildSparkline(qPts, '#f6821f', 180, 60);
-    const p99SparkSvg = buildSparkline(p99Pts, '#e53e3e', 180, 60);
-
+    const tenantQueries = lastQueriesData.filter(q => q.tenant_id === tenantID).slice(0,5);
     const topQHtml = tenantQueries.length > 0
       ? `<ul class="top-queries-list">${tenantQueries.map(q =>
-          `<li><span class="tq-time">${fmtMs(q.avg_time_ms)}</span><span title="${escHtml(q.query)}">${escHtml(q.query.slice(0, 80))}${q.query.length > 80 ? '…' : ''}</span></li>`
+          `<li><span class="tq-time">${fmtMs(q.avg_time_ms).replace(/<[^>]+>/g,'')}</span><span title="${escHtml(q.query)}">${escHtml(q.query.slice(0,80))}${q.query.length>80?'…':''}</span></li>`
         ).join('')}</ul>`
-      : `<div style="color:var(--muted);font-size:11px">No queries attributed to this tenant yet.</div>`;
-
+      : `<div style="color:var(--muted);font-size:12px">No queries yet</div>`;
     td.innerHTML = `<div class="drawer-inner">
-      <div class="drawer-section">
-        <div class="drawer-label">📈 Queries / hr</div>
-        <div class="drawer-sparkline">${qSparkSvg || '<span style="color:var(--muted);font-size:11px">No data yet</span>'}</div>
-      </div>
-      <div class="drawer-section">
-        <div class="drawer-label">⏱ P99 Latency</div>
-        <div class="drawer-sparkline">${p99SparkSvg || '<span style="color:var(--muted);font-size:11px">No data yet</span>'}</div>
-      </div>
-      <div class="drawer-section">
-        <div class="drawer-label">🐌 Top 5 Queries</div>
-        ${topQHtml}
-      </div>
+      <div><div class="drawer-label">Queries / hr</div><div class="drawer-sparkline">${buildSparkline(qPts,'var(--yellow)',180,56)||'<span style="color:var(--muted);font-size:12px">No data</span>'}</div></div>
+      <div><div class="drawer-label">P99 Latency</div><div class="drawer-sparkline">${buildSparkline(p99Pts,'var(--red)',180,56)||'<span style="color:var(--muted);font-size:12px">No data</span>'}</div></div>
+      <div><div class="drawer-label">Top 5 Queries</div>${topQHtml}</div>
     </div>`;
   } catch(e) {
-    const td = drawerRow.querySelector('td');
-    td.innerHTML = `<div class="drawer-inner"><div class="drawer-section"><span style="color:var(--muted)">Error loading tenant details: ${escHtml(e.message)}</span></div></div>`;
-  }
-}
-
-// ── Render Tenant Table ─────────────────────────────────────────────────
-function renderTenants(tenants) {
-  const tbody = document.getElementById('tenant-tbody');
-  if (!tenants || tenants.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="10" class="empty">No tenant data available yet. Waiting for queries…</td></tr>';
-    document.getElementById('ov-tenants').textContent = '0';
-    return;
-  }
-
-  document.getElementById('ov-tenants').textContent = tenants.length;
-  maxP99 = Math.max(1, ...tenants.map(t => t.p99_ms || 0));
-
-  // Rebuild the rows — preserve any open drawer
-  const rows = tenants.map((t, i) => {
-    const isActive = activeDrawerTenant === t.tenant_id;
-    return `<tr class="tenant-row${isActive ? ' active' : ''}" data-tenant="${escHtml(t.tenant_id)}" onclick="handleTenantClick(this)">
-      <td>${rankEmoji(i)}</td>
-      <td><span class="tenant-id" title="${escHtml(t.tenant_id)}">${escHtml(t.tenant_id)}</span></td>
-      <td class="num">${fmtNum(t.queries)}</td>
-      <td class="num">${fmtMs(t.avg_time_ms)}</td>
-      <td class="num">${miniBar(t.p50_ms, maxP99, false)}</td>
-      <td class="num">${miniBar(t.p95_ms, maxP99, t.p95_ms > maxP99*0.5)}</td>
-      <td class="num">${miniBar(t.p99_ms, maxP99, true)}</td>
-      <td class="num">${fmtNum(t.rows_read)}</td>
-      <td class="num">${t.connections || 0}</td>
-      <td class="num">${fmtBytes(t.io_bytes)}</td>
-    </tr>
-    <tr class="tenant-drawer" data-tenant="${escHtml(t.tenant_id)}" style="display:none">
-      <td colspan="10"><div class="drawer-inner"><div class="drawer-section" style="grid-column:1/-1"><span style="color:var(--muted)">Click row to expand details</span></div></div></td>
-    </tr>`;
-  });
-  tbody.innerHTML = rows.join('');
-
-  // Re-open drawer if one was active
-  if (activeDrawerTenant) {
-    const drawerRow = tbody.querySelector(`.tenant-drawer[data-tenant="${CSS.escape(activeDrawerTenant)}"]`);
-    if (drawerRow) {
-      drawerRow.classList.add('open');
-      drawerRow.style.display = 'table-row';
-    }
+    td.querySelector('td') && (td.innerHTML=`<div class="drawer-inner"><span style="color:var(--muted)">Error: ${escHtml(e.message)}</span></div>`);
   }
 }
 
@@ -1421,332 +1294,106 @@ function handleTenantClick(row) {
   const drawerRow = row.nextElementSibling;
   if (drawerRow && drawerRow.classList.contains('tenant-drawer')) {
     openTenantDrawer(tenantID, drawerRow);
-    // Toggle active class on tenant row
-    const allRows = document.querySelectorAll('.tenant-row');
-    allRows.forEach(r => r.classList.remove('active'));
-    if (activeDrawerTenant === tenantID) {
-      row.classList.add('active');
-    }
+    document.querySelectorAll('.tenant-row').forEach(r => r.classList.remove('active'));
+    if (activeDrawerTenant === tenantID) row.classList.add('active');
   }
 }
 
-// ── Render Query Table ─────────────────────────────────────────────────
+// ── Render Tenants ─────────────────────────────────────────────────────
+function renderTenants(tenants) {
+  const tbody = document.getElementById('tenant-tbody');
+  if (!tenants || tenants.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" class="empty">No tenant data yet</td></tr>';
+    document.getElementById('ov-tenants') && (document.getElementById('ov-tenants').textContent='0');
+    return;
+  }
+  maxP99 = Math.max(1, ...tenants.map(t => t.p99_ms||0));
+  const rows = tenants.map((t,i) => {
+    const isActive = activeDrawerTenant === t.tenant_id;
+    return `<tr class="tenant-row${isActive?' active':''}" data-tenant="${escHtml(t.tenant_id)}" onclick="handleTenantClick(this)">
+      <td>${rankLabel(i)}</td>
+      <td><span class="agent-id" title="${escHtml(t.tenant_id)}">${escHtml(t.tenant_id)}</span></td>
+      <td class="num">${fmtNum(t.queries)}</td>
+      <td class="num" style="font-variant-numeric:tabular-nums">${t.avg_time_ms ? t.avg_time_ms.toFixed(1) : '—'}</td>
+      <td class="num">${latCell(t.p50_ms,maxP99,'')}</td>
+      <td class="num">${latCell(t.p95_ms,maxP99,t.p95_ms>maxP99*.5?'warn':'')}</td>
+      <td class="num">${latCell(t.p99_ms,maxP99,'danger')}</td>
+      <td class="num">${fmtNum(t.rows_read)}</td>
+      <td class="num">${t.connections||0}</td>
+      <td class="num">${fmtBytes(t.io_bytes)}</td>
+    </tr>
+    <tr class="tenant-drawer" data-tenant="${escHtml(t.tenant_id)}" style="display:none">
+      <td colspan="10"></td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join('');
+  if (activeDrawerTenant) {
+    const dr = tbody.querySelector(`.tenant-drawer[data-tenant="${CSS.escape(activeDrawerTenant)}"]`);
+    if (dr) { dr.classList.add('open'); dr.style.display='table-row'; }
+  }
+}
+
+// ── Render Queries ─────────────────────────────────────────────────────
 function renderQueries(queries) {
   lastQueriesData = queries || [];
   const tbody = document.getElementById('query-tbody');
   if (!queries || queries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">No query data available. Enable pg_stat_statements for query metrics.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">No query data. Enable pg_stat_statements for query metrics.</td></tr>';
     return;
   }
-
-  const maxAvg = Math.max(1, ...queries.map(q => q.avg_time_ms || 0));
-
-  const rows = queries.map((q, i) => {
-    const pct = maxAvg > 0 ? Math.min(100, (q.avg_time_ms/maxAvg)*100) : 0;
-    return `<tr>
-      <td>${i+1}</td>
-      <td><span class="query-text" title="${escHtml(q.query)}">${escHtml(q.query)}</span></td>
-      <td><span class="tenant-id" title="${q.tenant_id}">${q.tenant_id || '—'}</span></td>
-      <td class="num">
-        <div class="latency-cell">
-          <span>${fmtMs(q.avg_time_ms)}</span>
-          <div class="mini-bar"><div class="mini-bar-fill danger" style="width:${pct}%"></div></div>
-        </div>
-      </td>
-      <td class="num">${fmtNum(q.calls)}</td>
-      <td class="num">${fmtNum(q.rows)}</td>
-    </tr>`;
-  });
-  tbody.innerHTML = rows.join('');
+  const maxAvg = Math.max(1, ...queries.map(q => q.avg_time_ms||0));
+  tbody.innerHTML = queries.map((q,i) => `<tr>
+    <td>${i+1}</td>
+    <td><span class="query-text" title="${escHtml(q.query)}">${escHtml(q.query)}</span></td>
+    <td><span class="agent-id">${q.tenant_id||'—'}</span></td>
+    <td class="num">${latCell(q.avg_time_ms,maxAvg,'danger')}</td>
+    <td class="num">${fmtNum(q.calls)}</td>
+    <td class="num">${fmtNum(q.rows)}</td>
+  </tr>`).join('');
 }
 
-// ── Sort Table ─────────────────────────────────────────────────────────
+// ── Sort ───────────────────────────────────────────────────────────────
 function sortTable(tableId, col) {
   const table = document.getElementById(tableId);
   const tbody = table.querySelector('tbody');
   const rows = Array.from(tbody.querySelectorAll('tr:not(.tenant-drawer)'));
   if (rows.length <= 1) return;
-
-  const key = tableId + ':' + col;
-  const asc = sortState[key] === 'asc' ? 'desc' : 'asc';
+  const key = tableId+':'+col;
+  const asc = sortState[key]==='asc' ? 'desc' : 'asc';
   sortState[key] = asc;
-
-  table.querySelectorAll('th').forEach((th, i) => {
-    const arrow = th.querySelector('.sort-arrow');
-    if (!arrow) return;
-    if (i === col) {
-      th.classList.add('sorted');
-      arrow.textContent = asc === 'asc' ? '↑' : '↓';
-    } else {
-      th.classList.remove('sorted');
-      arrow.textContent = '↕';
-    }
+  table.querySelectorAll('th').forEach((th,i) => {
+    const arr = th.querySelector('.sort-arrow');
+    if (!arr) return;
+    if (i===col) { th.classList.add('sorted'); arr.textContent = asc==='asc'?'↑':'↓'; }
+    else { th.classList.remove('sorted'); arr.textContent='↕'; }
   });
-
-  rows.sort((a, b) => {
-    const aCell = a.cells[col]?.textContent.trim() || '';
-    const bCell = b.cells[col]?.textContent.trim() || '';
-    const aNum = parseFloat(aCell.replace(/[^0-9.\-]/g, ''));
-    const bNum = parseFloat(bCell.replace(/[^0-9.\-]/g, ''));
-    if (!isNaN(aNum) && !isNaN(bNum)) {
-      return asc === 'asc' ? aNum - bNum : bNum - aNum;
-    }
-    return asc === 'asc' ? aCell.localeCompare(bCell) : bCell.localeCompare(aCell);
+  rows.sort((a,b) => {
+    const aT = a.cells[col]?.textContent.trim()||'';
+    const bT = b.cells[col]?.textContent.trim()||'';
+    const aN = parseFloat(aT.replace(/[^0-9.\-]/g,''));
+    const bN = parseFloat(bT.replace(/[^0-9.\-]/g,''));
+    if (!isNaN(aN)&&!isNaN(bN)) return asc==='asc'?aN-bN:bN-aN;
+    return asc==='asc'?aT.localeCompare(bT):bT.localeCompare(aT);
   });
-
-  // Re-insert in sorted order, each row followed by its drawer
   rows.forEach(r => {
     tbody.appendChild(r);
-    const drawer = tbody.querySelector(`.tenant-drawer[data-tenant="${r.getAttribute('data-tenant')}"]`);
-    if (drawer) tbody.appendChild(drawer);
+    const dr = tbody.querySelector(`.tenant-drawer[data-tenant="${r.getAttribute('data-tenant')}"]`);
+    if (dr) tbody.appendChild(dr);
   });
 }
 
-// ── Status indicator ───────────────────────────────────────────────────
+// ── Status ─────────────────────────────────────────────────────────────
 function setStatus(ok, msg) {
   const dot = document.getElementById('status-dot');
   const txt = document.getElementById('status-text');
-  dot.className = 'dot' + (ok ? '' : ' err');
+  dot.className = 'live-dot' + (ok ? ' ok' : ' err');
   txt.textContent = msg;
 }
 
-// ── Alert polling (every 5s, independent of main refresh) ─────────────
-setInterval(refreshAlerts, 5000);
-
-// ── Render Cost Panel ───────────────────────────────────────────────
-async function refreshCosts() {
-  try {
-    const costs = await fetchJSON('/api/costs');
-    const grid = document.getElementById('cost-grid');
-    if (!costs || costs.length === 0) {
-      grid.innerHTML = '<div class="empty">No cost data yet</div>';
-      return;
-    }
-    // Sort by cost descending
-    costs.sort((a, b) => (b.monthly_cost || 0) - (a.monthly_cost || 0));
-    const maxCost = Math.max(1, ...costs.map(c => c.monthly_cost || 0));
-    grid.innerHTML = costs.map(c => {
-      const pct = maxCost > 0 ? ((c.monthly_cost || 0) / maxCost * 100) : 0;
-      const prop = ((c.query_time_proportion || 0) * 100).toFixed(1);
-      return `<div class="cost-item">
-        <div class="cost-tenant">${escHtml(c.tenant_id)}</div>
-        <div class="cost-amount">$${(c.monthly_cost || 0).toFixed(0)}<span style="font-size:12px;color:var(--muted)">/mo</span></div>
-        <div class="cost-pct">${prop}% of total query time</div>
-        <div class="cost-bar"><div class="cost-bar-fill" style="width:${pct}%"></div></div>
-      </div>`;
-    }).join('');
-  } catch(e) { /* costs optional */ }
-}
-
-// ── Render Anomalies ────────────────────────────────────────────────
-async function refreshAnomalies() {
-  try {
-    const data = await fetchJSON('/api/anomalies');
-    const list = document.getElementById('anomaly-list');
-    const countEl = document.getElementById('anomaly-count');
-    const active = data.active || [];
-    countEl.textContent = active.length > 0 ? active.length + ' active' : 'None detected';
-    if (active.length === 0) {
-      list.innerHTML = '<div class="empty">No anomalies — all tenants within normal range</div>';
-      return;
-    }
-    list.innerHTML = active.map(a => {
-      const icon = a.severity === 'critical' ? '🔴' : a.severity === 'warning' ? '🟡' : '🔵';
-      const cls = 'severity-' + (a.severity || 'info');
-      return `<div class="anomaly-item">
-        <span class="anomaly-icon">${icon}</span>
-        <div class="anomaly-body">
-          <div class="anomaly-msg ${cls}">${escHtml(a.message || a.tenant_id)}</div>
-          <div class="anomaly-meta">Tenant: ${escHtml(a.tenant_id)} · Severity: ${a.severity} · z-score: ${(a.z_score || 0).toFixed(1)} · ${a.fired_at ? timeAgo(a.fired_at) : ''}</div>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) {
-    document.getElementById('anomaly-list').innerHTML = '<div class="empty">Anomaly endpoint unavailable</div>';
-  }
-}
-
-// ── Render Predictions ──────────────────────────────────────────────
-async function refreshPredictions() {
-  try {
-    const data = await fetchJSON('/api/predictions');
-    const list = document.getElementById('prediction-list');
-    const preds = data.predictions || data || [];
-    if (!Array.isArray(preds) || preds.length === 0) {
-      list.innerHTML = '<div class="empty">Collecting data for trend analysis…</div>';
-      return;
-    }
-    list.innerHTML = preds.map(p => {
-      const trend = (p.trend || '').toLowerCase();
-      let icon = '➡️';
-      let cls = 'trend-stable';
-      if (trend === 'rising' || trend === 'critical_rising') { icon = '📈'; cls = 'trend-rising'; }
-      else if (trend === 'falling') { icon = '📉'; cls = 'trend-falling'; }
-      const breach = p.predicted_breach_in_sec;
-      const breachText = breach && breach > 0
-        ? `⚠️ Breach in ~${Math.ceil(breach/60)} min`
-        : 'Within limits';
-      return `<div class="prediction-item">
-        <span class="prediction-trend ${cls}">${icon}</span>
-        <div class="prediction-body">
-          <div class="prediction-msg"><strong>${escHtml(p.tenant_id)}</strong> — ${escHtml(p.trend || 'stable')}</div>
-          <div class="prediction-detail">${breachText} · Projected: ${fmtMs(p.projected_value)} · R²: ${(p.r_squared || 0).toFixed(2)}</div>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) {
-    document.getElementById('prediction-list').innerHTML = '<div class="empty">Prediction endpoint unavailable</div>';
-  }
-}
-
-// ── Render Throttle Status ──────────────────────────────────────────
-async function refreshThrottle() {
-  try {
-    const data = await fetchJSON('/api/throttle/status');
-    const grid = document.getElementById('throttle-grid');
-    const statusEl = document.getElementById('throttle-status');
-    const tenants = data.tenants || data || [];
-    if (!Array.isArray(tenants) || tenants.length === 0) {
-      const enabled = data.enabled !== undefined ? data.enabled : false;
-      statusEl.textContent = enabled ? 'Enabled — no active throttles' : 'Disabled';
-      grid.innerHTML = `<div class="empty">${enabled ? 'All tenants within limits' : 'Throttling is disabled. Set <code>THROTTLE_ENABLED=true</code> to auto-kill runaway queries. <a href="https://github.com/shreyasXV/faultwall#throttling" style="color:var(--accent)">Learn more →</a>'}</div>`;
-      return;
-    }
-    const activeCount = tenants.filter(t => t.throttled).length;
-    statusEl.textContent = activeCount > 0 ? activeCount + ' tenants throttled' : 'All clear';
-    grid.innerHTML = tenants.map(t => {
-      const isThrottled = t.throttled || false;
-      return `<div class="throttle-item">
-        <span class="throttle-dot ${isThrottled ? 'active' : 'clear'}"></span>
-        <div class="throttle-info">
-          <div class="throttle-tenant">${escHtml(t.tenant_id)}</div>
-          <div class="throttle-detail">${isThrottled ? '⛔ THROTTLED — ' + (t.reason || 'resource limit') : '✅ Normal'}</div>
-        </div>
-      </div>`;
-    }).join('');
-  } catch(e) {
-    document.getElementById('throttle-grid').innerHTML = '<div class="empty">Throttle endpoint unavailable</div>';
-  }
-}
-
-// ── Block / Pause Actions ──────────────────────────────────────────────
-let pausedAgentSet = new Set();
-
-async function blockQuery(query, agentId) {
-  if (!confirm('Block this query pattern for agent "' + agentId + '"?\n\nTables referenced in the query will be added to blocked_tables.')) return;
-  try {
-    const resp = await fetch('/api/rules/block', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({query_pattern: query, agent_id: agentId})
-    });
-    const data = await resp.json();
-    if (data.status === 'ok') {
-      alert('Block rule applied. Tables blocked: ' + (data.blocked_tables || []).join(', '));
-      refreshViolations();
-    } else {
-      alert('Error: ' + (data.error || 'unknown'));
-    }
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-async function togglePauseAgent(agentId) {
-  const isPaused = pausedAgentSet.has(agentId);
-  const method = isPaused ? 'DELETE' : 'POST';
-  try {
-    const resp = await fetch('/api/agents/pause/' + encodeURIComponent(agentId), {method});
-    const data = await resp.json();
-    if (data.status === 'ok') {
-      if (data.paused) {
-        pausedAgentSet.add(agentId);
-      } else {
-        pausedAgentSet.delete(agentId);
-      }
-      refreshAgentConnections();
-    } else {
-      alert('Error: ' + (data.error || 'unknown'));
-    }
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-async function loadPausedAgents() {
-  try {
-    const data = await fetchJSON('/api/agents/pause/');
-    pausedAgentSet = new Set(data.paused_agents || []);
-  } catch(e) { /* optional */ }
-}
-
-// ── Rule Creation Modal ───────────────────────────────────────────────
-let ruleModalQuery = '';
-let ruleModalAgent = '';
-
-function openRuleModal(query, agentId) {
-  ruleModalQuery = query;
-  ruleModalAgent = agentId;
-  document.getElementById('rule-agent-id').value = agentId;
-  document.getElementById('rule-query').textContent = query;
-  document.getElementById('rule-action').value = 'block_table';
-  document.getElementById('rule-modal').classList.add('open');
-  previewRule();
-}
-
-function closeRuleModal() {
-  document.getElementById('rule-modal').classList.remove('open');
-}
-
-async function previewRule() {
-  const action = document.getElementById('rule-action').value;
-  const preview = document.getElementById('rule-yaml-preview');
-  const piiInfo = document.getElementById('rule-pii-info');
-  preview.textContent = 'Loading preview…';
-  try {
-    const resp = await fetch('/api/rules/preview', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({query: ruleModalQuery, agent_id: ruleModalAgent, action: action})
-    });
-    const data = await resp.json();
-    preview.textContent = data.yaml_preview || 'No preview available';
-    if (data.has_pii) {
-      piiInfo.innerHTML = '<span style="color:var(--red);">PII detected: ' + (data.pii_columns || []).join(', ') + '</span>';
-    } else {
-      piiInfo.textContent = '';
-    }
-  } catch(e) {
-    preview.textContent = 'Error loading preview: ' + e.message;
-  }
-}
-
-async function applyRule() {
-  const action = document.getElementById('rule-action').value;
-  try {
-    const resp = await fetch('/api/rules/create', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({query: ruleModalQuery, agent_id: ruleModalAgent, action: action})
-    });
-    const data = await resp.json();
-    if (data.status === 'ok') {
-      alert('Rule applied successfully!\n\n' + (data.message || ''));
-      closeRuleModal();
-      refreshViolations();
-    } else {
-      alert('Error: ' + (data.error || 'unknown'));
-    }
-  } catch(e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-// ── Render Violations ──────────────────────────────────────────────────
+// ── Violations ─────────────────────────────────────────────────────────
 let allViolations = [];
 
-// Filter input handler
-document.getElementById('violation-filter').addEventListener('input', function() {
+document.getElementById('violation-filter').addEventListener('input', function(){
   renderFilteredViolations(this.value.toLowerCase().trim());
 });
 
@@ -1754,62 +1401,58 @@ function renderFilteredViolations(filter) {
   const list = document.getElementById('violation-list');
   const filtered = filter
     ? allViolations.filter(v =>
-        (v.agent_id || '').toLowerCase().includes(filter) ||
-        (v.reason || '').toLowerCase().includes(filter) ||
-        (v.action || '').toLowerCase().includes(filter) ||
-        (v.table || '').toLowerCase().includes(filter) ||
-        (v.query || '').toLowerCase().includes(filter))
+        (v.agent_id||'').toLowerCase().includes(filter)||
+        (v.reason||'').toLowerCase().includes(filter)||
+        (v.action||'').toLowerCase().includes(filter)||
+        (v.table||'').toLowerCase().includes(filter)||
+        (v.query||'').toLowerCase().includes(filter))
     : allViolations;
 
   if (filtered.length === 0) {
-    list.innerHTML = `<div class="empty">${filter ? 'No violations matching "' + escHtml(filter) + '"' : 'No policy violations detected'}</div>`;
-  } else {
-    const shown = filtered.slice(0, 50);
-    list.innerHTML = shown.map((v, idx) => {
-      const icon = v.action === 'blocked' ? '🔴' : '🟡';
-      const badgeCls = v.action === 'blocked' ? 'blocked' : 'monitored';
-      const badgeText = v.action === 'blocked' ? 'BLOCKED' : 'MONITORED';
-      const reason = (v.reason || '').replace(/_/g, ' ');
-      const ts = v.timestamp ? timeAgo(v.timestamp) : '';
-      const safeQuery = (v.query || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n');
-      const safeAgent = (v.agent_id || '').replace(/'/g, "\\'");
-      const piiBadge = v.has_pii ? `<span class="violation-badge pii">PII</span>` : '';
-      const piiDetail = v.pii_columns && v.pii_columns.length > 0
-        ? ` · PII: ${v.pii_columns.join(', ')}`
-        : '';
-      return `<div class="violation-item" style="${v.has_pii ? 'border-left: 3px solid var(--red);' : ''}">
-        <span class="violation-icon">${icon}</span>
-        <div class="violation-body">
-          <div class="violation-msg">
-            <span class="violation-badge ${badgeCls}">${badgeText}</span>
-            ${piiBadge}
-            Agent <strong>${escHtml(v.agent_id)}</strong>${v.mission_id ? ' / ' + escHtml(v.mission_id) : ''} &mdash; ${escHtml(reason)}
-            ${v.table ? ' (table: ' + escHtml(v.table) + ')' : ''}
-            ${v.operation ? ' [' + escHtml(v.operation) + ']' : ''}
-          </div>
-          <div class="violation-query" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
-          <div class="violation-meta">PID: ${v.pid || '—'} · ${ts}${piiDetail}
-            <button class="btn-block" onclick="blockQuery('${safeQuery}', '${safeAgent}')" style="margin-left:8px;">Block</button>
-            <button class="btn-create-rule" onclick="openRuleModal('${safeQuery}', '${safeAgent}')" style="margin-left:4px;">Create Rule</button>
-          </div>
-        </div>
-      </div>`;
-    }).join('') + (filtered.length > 50 ? `<div class="empty">Showing 50 of ${filtered.length}</div>` : '');
+    list.innerHTML = `<div class="empty">${filter?'No violations matching "'+escHtml(filter)+'"':'No policy violations detected'}</div>`;
+    return;
   }
+  list.innerHTML = '<div class="event-list">'+filtered.slice(0,50).map(v => {
+    const isBlocked = v.action==='blocked';
+    const badgeCls = isBlocked ? 'badge-blocked' : 'badge-monitored';
+    const badgeText = isBlocked ? 'BLOCKED' : 'MONITORED';
+    const itemCls = isBlocked ? 'is-blocked' : 'is-monitor';
+    const reason = (v.reason||'').replace(/_/g,' ');
+    const ts = v.timestamp ? timeAgo(v.timestamp) : '';
+    const safeQ = (v.query||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,'\\n');
+    const safeA = (v.agent_id||'').replace(/'/g,"\\'");
+    const piiBadge = v.has_pii ? `<span class="badge badge-pii">PII</span>` : '';
+    const piiDetail = v.pii_columns?.length ? ` · PII: ${v.pii_columns.join(', ')}` : '';
+    return `<div class="event-item ${itemCls}">
+      <div class="event-body">
+        <div class="event-title">
+          <span class="badge ${badgeCls}">${badgeText}</span>
+          ${piiBadge}
+          <span>Agent <strong>${escHtml(v.agent_id)}</strong>${v.mission_id?' / '+escHtml(v.mission_id):''}</span>
+          <span style="color:var(--muted)">—</span>
+          <span>${escHtml(reason)}${v.table?' · '+escHtml(v.table):''}${v.operation?' ['+escHtml(v.operation)+']':''}</span>
+        </div>
+        <div class="event-sql" title="${escHtml(v.query)}">${escHtml(v.query)}</div>
+        <div class="event-meta">
+          <span>PID ${v.pid||'—'}</span>
+          <span>${ts}${piiDetail}</span>
+          <button class="btn btn-danger" style="padding:2px 7px;font-size:11px;" onclick="blockQuery('${safeQ}','${safeA}')">Block</button>
+          <button class="btn btn-ghost" style="padding:2px 7px;font-size:11px;" onclick="openRuleModal('${safeQ}','${safeA}')">Create Rule</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('')+'</div>'+(filtered.length>50?`<div class="empty">Showing 50 of ${filtered.length}</div>`:'');
 }
 
 async function refreshViolations() {
   try {
     const data = await fetchJSON('/api/violations');
+    allViolations = data.violations||[];
     const countEl = document.getElementById('violation-count');
-    allViolations = data.violations || [];
-    countEl.textContent = allViolations.length > 0 ? allViolations.length + ' total' : 'None';
-    document.getElementById('po-violations').textContent = allViolations.length;
-
-    const filter = document.getElementById('violation-filter').value.toLowerCase().trim();
-    renderFilteredViolations(filter);
-
-    // Build per-agent chart
+    if (countEl) countEl.textContent = allViolations.length > 0 ? allViolations.length+' total' : '—';
+    const poV = document.getElementById('po-violations');
+    if (poV) poV.textContent = allViolations.length;
+    renderFilteredViolations(document.getElementById('violation-filter').value.toLowerCase().trim());
     renderViolationChart(allViolations);
   } catch(e) {
     document.getElementById('violation-list').innerHTML = '<div class="empty">Violations endpoint unavailable</div>';
@@ -1818,117 +1461,406 @@ async function refreshViolations() {
 
 function renderViolationChart(violations) {
   const chart = document.getElementById('violation-chart');
-  if (!violations || violations.length === 0) {
-    chart.innerHTML = '<div class="empty">No violation data</div>';
-    return;
-  }
-
+  if (!violations||violations.length===0) { chart.innerHTML='<div class="empty">No data</div>'; return; }
   const counts = {};
-  violations.forEach(v => {
-    const key = v.agent_id || 'unknown';
-    counts[key] = (counts[key] || 0) + 1;
-  });
-
-  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const maxCount = Math.max(1, ...entries.map(e => e[1]));
-
-  chart.innerHTML = '<div class="agent-bar-chart">' + entries.map(([agent, count]) => {
-    const heightPct = (count / maxCount) * 80;
-    return `<div class="agent-bar-col">
-      <span class="agent-bar-count">${count}</span>
-      <div class="agent-bar" style="height:${heightPct}px"></div>
-      <span class="agent-bar-label" title="${escHtml(agent)}">${escHtml(agent)}</span>
+  violations.forEach(v => { const k=v.agent_id||'unknown'; counts[k]=(counts[k]||0)+1; });
+  const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  const maxCount = Math.max(1,...entries.map(e=>e[1]));
+  chart.innerHTML = '<div class="bar-chart">'+entries.map(([agent,count]) => {
+    const h = Math.max(4, (count/maxCount)*94); // 94px = chart height minus top+bottom padding
+    return `<div class="bar-col">
+      <span class="bar-count">${count}</span>
+      <div class="bar-rect" style="height:${h}px"></div>
+      <span class="bar-label" title="${escHtml(agent)}">${escHtml(agent)}</span>
     </div>`;
-  }).join('') + '</div>';
+  }).join('')+'</div>';
 }
 
-// ── Render Agent Stats ────────────────────────────────────────────────
+// ── QWM Flags ──────────────────────────────────────────────────────────
+let allQWMFlags = [];
+
+(function(){
+  const fe = document.getElementById('qwm-filter');
+  if (fe) fe.addEventListener('input', function(){ renderQWMFlags(this.value); });
+})();
+
+function renderQWMFlags(filter) {
+  const list = document.getElementById('qwm-flag-list');
+  if (!list) return;
+  const f = (filter||'').toLowerCase().trim();
+  const filtered = f ? allQWMFlags.filter(x=>(x.agent||'').toLowerCase().includes(f)) : allQWMFlags;
+  if (filtered.length===0) {
+    list.innerHTML=`<div class="empty">${f?'No QWM flags matching "'+escHtml(f)+'"':'No QWM flags yet. Flags appear when a query scores > 0.7 risk.'}</div>`;
+    return;
+  }
+  list.innerHTML='<div class="event-list">'+filtered.slice(0,50).map(x => {
+    const ts = x.timestamp ? timeAgo(x.timestamp) : '';
+    const score = typeof x.score==='number' ? x.score.toFixed(3) : '—';
+    const feats = (x.top_features||[]).join(', ');
+    const tables = (x.tables||[]).join(', ');
+    const c = x.conditions||{};
+    const condBits = [];
+    if (typeof c.utilization==='number') condBits.push(`util ${(c.utilization*100).toFixed(0)}%`);
+    if (c.active_backends) condBits.push(`${c.active_backends} active`);
+    if (c.blocked_backends) condBits.push(`${c.blocked_backends} blocked`);
+    if (c.longest_active_ms>=1000) condBits.push(`longest ${(c.longest_active_ms/1000).toFixed(1)}s`);
+    if (typeof c.cache_hit_ratio==='number'&&c.cache_hit_ratio>0&&c.cache_hit_ratio<0.9) condBits.push(`cache ${(c.cache_hit_ratio*100).toFixed(0)}%`);
+    if (c.tps) condBits.push(`${c.tps.toFixed(1)} tps`);
+    if (c.congestion_x>1) condBits.push(`×${c.congestion_x.toFixed(1)} congestion`);
+    const predLine = (x.predicted_ms&&x.p_breach) ? `<div class="event-pred">predicted ~${(x.predicted_ms/1000).toFixed(1)}s · P(SLO breach) ${(x.p_breach*100).toFixed(0)}%</div>` : '';
+    const condLine = condBits.length ? `<div class="event-meta">DB conditions: ${escHtml(condBits.join(' · '))}</div>` : '';
+    return `<div class="event-item is-risk">
+      <div class="event-body">
+        <div class="event-title">
+          <span class="badge badge-risk">RISK ${escHtml(score)}</span>
+          <span>Agent <strong>${escHtml(x.agent||'—')}</strong></span>
+          ${x.operation?`<span style="color:var(--muted)">[${escHtml(x.operation)}]</span>`:''}
+          ${tables?`<span style="color:var(--muted)">tables: ${escHtml(tables)}</span>`:''}
+        </div>
+        <div class="event-sql" title="${escHtml(x.query)}">${escHtml(x.query)}</div>
+        ${x.reason?`<div class="event-reason">${escHtml(x.reason)}</div>`:''}
+        ${predLine}
+        ${condLine}
+        <div class="event-meta">
+          ${feats?'<span>features: '+escHtml(feats)+'</span>':''}
+          <span>${ts}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('')+'</div>'+(filtered.length>50?`<div class="empty">Showing 50 of ${filtered.length}</div>`:'');
+}
+
+async function refreshQWMFlags() {
+  try {
+    const data = await fetchJSON('/api/qwm/flags');
+    allQWMFlags = data.flags||[];
+    const countEl = document.getElementById('qwm-flag-count');
+    if (countEl) countEl.textContent = allQWMFlags.length > 0 ? allQWMFlags.length+' flagged' : '—';
+    renderQWMFlags(document.getElementById('qwm-filter')?.value||'');
+  } catch(e) {
+    const list = document.getElementById('qwm-flag-list');
+    if (list) list.innerHTML='<div class="empty">QWM endpoint unavailable</div>';
+  }
+}
+
+// ── APA Proposals ──────────────────────────────────────────────────────
+async function refreshAPAProposals() {
+  const list = document.getElementById('apa-list');
+  if (!list) return;
+  try {
+    const data = await fetchJSON('/api/apa/proposals');
+    const agents = data.agents||[];
+    const runs = data.recent_runs||[];
+    const pending = data.pending_total||0;
+    const countEl = document.getElementById('apa-pending-count');
+    if (countEl) countEl.textContent = pending>0 ? pending+' pending review' : (agents.length?'all clear':'—');
+
+    let html = '';
+
+    // File-drop proposals (downloadable YAML)
+    try {
+      const fd = await fetchJSON('/api/apa/proposals/files');
+      const proposals = (fd.proposals||[]).filter(p=>p.status!=='dismissed');
+      if (proposals.length) {
+        html += '<div class="event-list">'+proposals.slice(0,20).map(p => {
+          const conf = typeof p.confidence==='number' ? `${(p.confidence*100).toFixed(0)}%` : '—';
+          const ts = p.created_at ? timeAgo(p.created_at) : '';
+          const applied = p.status==='applied';
+          const badge = applied
+            ? '<span class="badge badge-applied">APPLIED</span>'
+            : '<span class="badge badge-ready">READY</span>';
+          const safeId = escHtml(p.id);
+          return `<div class="event-item is-proposal">
+            <div class="event-body">
+              <div class="event-title">
+                ${badge}
+                <span>Agent <strong>${escHtml(p.agent_id)}</strong></span>
+                <span style="color:var(--muted)">confidence ${conf} · ${p.diff_lines||0} diff lines</span>
+              </div>
+              ${p.yaml_diff?`<pre class="event-sql expandable">${escHtml(p.yaml_diff)}</pre>`:''}
+              <div class="event-meta">
+                <a href="${escHtml(p.download_url)}" class="btn btn-download" style="font-size:12px;padding:3px 9px;">↓ Download YAML</a>
+                ${applied?'':`<button class="btn btn-success" style="font-size:12px;padding:3px 9px;" onclick="apaProposalAction('${safeId}','apply')">Mark Applied</button>`}
+                <button class="btn btn-ghost" style="font-size:12px;padding:3px 9px;" onclick="apaProposalAction('${safeId}','dismiss')">Dismiss</button>
+                <span>${ts}</span>
+              </div>
+            </div>
+          </div>`;
+        }).join('')+'</div>';
+      }
+    } catch(e) { /* file-drop optional */ }
+
+    // Pending review queue
+    const pendingItems = [];
+    agents.forEach(a => (a.pending_review||[]).forEach(fp => pendingItems.push({agent:a.agent_id,fp})));
+    if (pendingItems.length) {
+      if (html) html += '<div style="height:1px;background:var(--border);margin:4px 0;"></div>';
+      html += '<div class="event-list">'+pendingItems.slice(0,30).map(({agent,fp}) => `
+        <div class="event-item is-pending">
+          <div class="event-body">
+            <div class="event-title">
+              <span class="badge badge-pending">PENDING</span>
+              <span>Agent <strong>${escHtml(agent)}</strong></span>
+              ${fp.verdict?`<span style="color:var(--muted)">${escHtml(fp.verdict)}</span>`:''}
+            </div>
+            <div class="event-sql" title="${escHtml(fp.sql||'')}">${escHtml(fp.sql||fp.hash||'')}</div>
+            ${fp.reason?`<div class="event-reason">${escHtml(fp.reason)}</div>`:''}
+            <div class="event-meta">
+              <span>seen ${fp.seen||0}×</span>
+              <span style="font-family:var(--mono);font-size:11px">${escHtml((fp.hash||'').slice(0,16))}</span>
+            </div>
+          </div>
+        </div>`).join('')+'</div>';
+    }
+
+    // Recent APA runs
+    if (runs.length) {
+      if (html) html += '<div style="height:1px;background:var(--border);margin:4px 0;"></div>';
+      html += '<div class="event-list">'+runs.slice(0,10).map(r => {
+        const ts = r.timestamp ? timeAgo(r.timestamp) : '';
+        const conf = typeof r.confidence==='number'&&r.confidence>0 ? ` · confidence ${(r.confidence*100).toFixed(0)}%` : '';
+        const pr = r.pr_url ? ` · <a href="${escHtml(r.pr_url)}" target="_blank">PR</a>` : '';
+        return `<div class="event-item" style="border-left-color:var(--border)">
+          <div class="event-body">
+            <div class="event-title">
+              <span style="color:${r.error?'var(--red)':'var(--text2)'}; font-size:12px">${r.error?'ERROR':'RUN'}</span>
+              <span>Agent <strong>${escHtml(r.agent_id||'—')}</strong> · ${r.pending_count||0} pending${conf}${pr}</span>
+            </div>
+            ${r.error?`<div class="event-reason" style="color:var(--red)">${escHtml(r.error)}</div>`:''}
+            <div class="event-meta"><span>${escHtml(r.provider||'')} · ${ts}</span></div>
+          </div>
+        </div>`;
+      }).join('')+'</div>';
+    }
+
+    list.innerHTML = html || '<div class="empty">No APA proposals yet. Run <code>faultwall apa sync</code> then <code>faultwall apa run</code>.</div>';
+  } catch(e) {
+    list.innerHTML = '<div class="empty">APA endpoint unavailable</div>';
+  }
+}
+
+async function apaProposalAction(id, action) {
+  try {
+    await fetch('/api/apa/proposals/files/'+encodeURIComponent(id)+'/'+action, {method:'POST'});
+  } catch(e) { /* best-effort */ }
+  refreshAPAProposals();
+}
+
+// ── Agent Stats ────────────────────────────────────────────────────────
 async function refreshAgentStats() {
   try {
     const data = await fetchJSON('/api/agents/stats');
     const tbody = document.getElementById('agent-stats-tbody');
-    const agents = data.agents || [];
-    if (agents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty">No agent data yet</td></tr>';
-      return;
-    }
-    // Sort by total queries descending
-    agents.sort((a, b) => (b.total_queries || 0) - (a.total_queries || 0));
-    document.getElementById('po-queries').textContent = fmtNum(agents.reduce((s, a) => s + (a.total_queries || 0), 0));
+    const agents = data.agents||[];
+    if (agents.length===0) { tbody.innerHTML='<tr><td colspan="8" class="empty">No agent data yet</td></tr>'; return; }
+    agents.sort((a,b)=>(b.total_queries||0)-(a.total_queries||0));
+    const poQ = document.getElementById('po-queries');
+    if (poQ) poQ.textContent = fmtNum(agents.reduce((s,a)=>s+(a.total_queries||0),0));
     tbody.innerHTML = agents.map(a => {
-      const status = a.paused ? '<span style="color:var(--yellow)">⏸ paused</span>'
-        : a.active ? '<span style="color:#38a169">● active</span>'
-        : '<span style="color:var(--muted)">○ inactive</span>';
+      const statusTxt = a.paused
+        ? '<span class="dot-paused">⏸ paused</span>'
+        : a.active
+          ? '<span class="dot-active">● active</span>'
+          : '<span class="dot-inactive">○ inactive</span>';
       return `<tr>
-        <td><span class="tenant-id">${escHtml(a.agent_id)}</span></td>
+        <td><span class="agent-id">${escHtml(a.agent_id)}</span></td>
         <td class="num">${fmtNum(a.total_queries)}</td>
         <td class="num">${fmtNum(a.total_rows)}</td>
-        <td class="num">$${(a.estimated_cost || 0).toFixed(4)}</td>
-        <td class="num">${fmtMs(a.total_duration_ms)}</td>
-        <td class="num">${fmtMs(a.avg_duration_ms)}</td>
-        <td class="num">${a.violations || 0}</td>
-        <td>${status}</td>
+        <td class="num" style="font-family:var(--mono);font-size:12px">$${(a.estimated_cost||0).toFixed(4)}</td>
+        <td class="num">${fmtMs(a.total_duration_ms).replace(/<[^>]+>/g,'')}</td>
+        <td class="num">${fmtMs(a.avg_duration_ms).replace(/<[^>]+>/g,'')}</td>
+        <td class="num">${a.violations||0}</td>
+        <td>${statusTxt}</td>
       </tr>`;
     }).join('');
   } catch(e) {
-    document.getElementById('agent-stats-tbody').innerHTML = '<tr><td colspan="8" class="empty">Stats endpoint unavailable</td></tr>';
+    document.getElementById('agent-stats-tbody').innerHTML='<tr><td colspan="8" class="empty">Stats endpoint unavailable</td></tr>';
   }
 }
 
-// ── Render Connected Agents ────────────────────────────────────────────
+// ── Connected Agents ───────────────────────────────────────────────────
+let pausedAgentSet = new Set();
+
+async function loadPausedAgents() {
+  try { const data=await fetchJSON('/api/agents/pause/'); pausedAgentSet=new Set(data.paused_agents||[]); } catch(e) {}
+}
+
+async function togglePauseAgent(agentId) {
+  const isPaused = pausedAgentSet.has(agentId);
+  try {
+    const resp = await fetch('/api/agents/pause/'+encodeURIComponent(agentId), {method:isPaused?'DELETE':'POST'});
+    const data = await resp.json();
+    if (data.status==='ok') { data.paused?pausedAgentSet.add(agentId):pausedAgentSet.delete(agentId); refreshAgentConnections(); }
+    else alert('Error: '+(data.error||'unknown'));
+  } catch(e) { alert('Error: '+e.message); }
+}
+
 async function refreshAgentConnections() {
   try {
     const data = await fetchJSON('/api/firewall/agents');
     const tbody = document.getElementById('agent-conn-tbody');
     const countEl = document.getElementById('agent-conn-count');
-    const agents = data.agents || [];
-    const activeCount = agents.filter(a => a.active).length;
-    countEl.textContent = agents.length > 0
-      ? `${activeCount} active · ${agents.length} total`
-      : 'None detected';
-    document.getElementById('po-agents').textContent = activeCount;
-
-    if (agents.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty">No agent connections detected</td></tr>';
-      return;
-    }
-    // Sort: active first, then by last_seen desc
-    agents.sort((a, b) => {
-      if (a.active !== b.active) return b.active ? 1 : -1;
-      return (b.last_seen || '').localeCompare(a.last_seen || '');
-    });
+    const agents = data.agents||[];
+    const activeCount = agents.filter(a=>a.active).length;
+    if (countEl) countEl.textContent = agents.length>0?`${activeCount} active · ${agents.length} total`:'—';
+    const poA = document.getElementById('po-agents');
+    if (poA) poA.textContent = activeCount;
+    if (agents.length===0) { tbody.innerHTML='<tr><td colspan="7" class="empty">No agent connections detected</td></tr>'; return; }
+    agents.sort((a,b)=>{ if(a.active!==b.active) return b.active?1:-1; return (b.last_seen||'').localeCompare(a.last_seen||''); });
     tbody.innerHTML = agents.map(a => {
       const isPaused = pausedAgentSet.has(a.agent_id);
-      const statusDot = isPaused
-        ? '<span style="color:var(--yellow)">⏸ paused</span>'
-        : a.active
-          ? '<span style="color:#38a169">● active</span>'
-          : '<span style="color:var(--muted)">○ inactive</span>';
-      const lastSeen = a.last_seen ? timeAgo(a.last_seen) : '—';
-      const safeAgent = (a.agent_id || '').replace(/'/g, "\\'");
+      const statusTxt = isPaused
+        ? '<span class="dot-paused">⏸ paused</span>'
+        : a.active ? '<span class="dot-active">● active</span>'
+        : '<span class="dot-inactive">○ inactive</span>';
+      const safeA = (a.agent_id||'').replace(/'/g,"\\'");
       const pauseBtn = isPaused
-        ? `<button class="btn-resume" onclick="togglePauseAgent('${safeAgent}')">Resume</button>`
-        : `<button class="btn-pause" onclick="togglePauseAgent('${safeAgent}')">Pause</button>`;
-      return `<tr style="${a.active && !isPaused ? '' : 'opacity:0.6'}">
-        <td><span class="tenant-id">${escHtml(a.agent_id || '—')}</span></td>
-        <td>${escHtml(a.last_mission || '—')}</td>
-        <td>${statusDot}</td>
-        <td>${a.total_queries || 0} queries · ${a.violations || 0} violations</td>
-        <td>${lastSeen}</td>
-        <td>${escHtml(a.username || '—')}</td>
+        ? `<button class="btn btn-success" style="padding:2px 8px;font-size:11px;" onclick="togglePauseAgent('${safeA}')">Resume</button>`
+        : `<button class="btn btn-warn" style="padding:2px 8px;font-size:11px;" onclick="togglePauseAgent('${safeA}')">Pause</button>`;
+      return `<tr style="${a.active&&!isPaused?'':'opacity:.55'}">
+        <td><span class="agent-id">${escHtml(a.agent_id||'—')}</span></td>
+        <td class="cell-mono">${escHtml(a.last_mission||'—')}</td>
+        <td>${statusTxt}</td>
+        <td class="cell-mono">${a.total_queries||0} queries · ${a.violations||0} violations</td>
+        <td class="cell-mono">${a.last_seen?timeAgo(a.last_seen):'—'}</td>
+        <td class="cell-mono">${escHtml(a.username||'—')}</td>
         <td>${pauseBtn}</td>
       </tr>`;
     }).join('');
   } catch(e) {
-    document.getElementById('agent-conn-tbody').innerHTML = '<tr><td colspan="6" class="empty">Agent endpoint unavailable</td></tr>';
+    document.getElementById('agent-conn-tbody').innerHTML='<tr><td colspan="7" class="empty">Agent endpoint unavailable</td></tr>';
   }
 }
 
-// ── Main refresh loop ──────────────────────────────────────────────────
+// ── Cost / Anomalies / Predictions / Throttle ──────────────────────────
+async function refreshCosts() {
+  try {
+    const costs = await fetchJSON('/api/costs');
+    const grid = document.getElementById('cost-grid');
+    if (!costs||costs.length===0) { grid.innerHTML='<div class="empty">No cost data yet</div>'; return; }
+    costs.sort((a,b)=>(b.monthly_cost||0)-(a.monthly_cost||0));
+    grid.innerHTML = costs.map(c => `<div class="cost-cell">
+      <div class="cost-agent">${escHtml(c.tenant_id)}</div>
+      <div class="cost-amount">$${(c.monthly_cost||0).toFixed(0)}<span style="font-size:12px;color:var(--muted)">/mo</span></div>
+      <div class="cost-pct">${((c.query_time_proportion||0)*100).toFixed(1)}% of total query time</div>
+    </div>`).join('');
+  } catch(e) { /* optional */ }
+}
+
+async function refreshAnomalies() {
+  try {
+    const data = await fetchJSON('/api/anomalies');
+    const list = document.getElementById('anomaly-list');
+    const active = data.active||[];
+    document.getElementById('anomaly-count').textContent = active.length>0?active.length+' active':'—';
+    if (active.length===0) { list.innerHTML='<div class="empty">No anomalies — all tenants within normal range</div>'; return; }
+    list.innerHTML = active.map(a => `<div class="anom-item">
+      <div>
+        <div class="anom-msg sev-${a.severity||'info'}">${escHtml(a.message||a.tenant_id)}</div>
+        <div class="anom-meta">Tenant: ${escHtml(a.tenant_id)} · z-score: ${(a.z_score||0).toFixed(1)} · ${a.fired_at?timeAgo(a.fired_at):''}</div>
+      </div>
+    </div>`).join('');
+  } catch(e) { document.getElementById('anomaly-list').innerHTML='<div class="empty">Unavailable</div>'; }
+}
+
+async function refreshPredictions() {
+  try {
+    const data = await fetchJSON('/api/predictions');
+    const list = document.getElementById('prediction-list');
+    const preds = data.predictions||data||[];
+    if (!Array.isArray(preds)||preds.length===0) { list.innerHTML='<div class="empty">Collecting data…</div>'; return; }
+    list.innerHTML = preds.map(p => {
+      const trend = (p.trend||'').toLowerCase();
+      const cls = trend.includes('rising')?'trend-rising':trend==='falling'?'trend-falling':'trend-stable';
+      const breach = p.predicted_breach_in_sec;
+      const breachText = breach&&breach>0?`Breach in ~${Math.ceil(breach/60)} min`:'Within limits';
+      return `<div class="pred-item">
+        <div>
+          <div class="anom-msg ${cls}">${escHtml(p.tenant_id)} — ${escHtml(p.trend||'stable')}</div>
+          <div class="anom-meta">${breachText} · Projected: ${(p.projected_value||0).toFixed(1)} · R²: ${(p.r_squared||0).toFixed(2)}</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) { document.getElementById('prediction-list').innerHTML='<div class="empty">Unavailable</div>'; }
+}
+
+async function refreshThrottle() {
+  try {
+    const data = await fetchJSON('/api/throttle/status');
+    const grid = document.getElementById('throttle-grid');
+    const statusEl = document.getElementById('throttle-status');
+    const tenants = data.tenants||data||[];
+    if (!Array.isArray(tenants)||tenants.length===0) {
+      const enabled = data.enabled!==undefined?data.enabled:false;
+      if (statusEl) statusEl.textContent = enabled?'enabled':'disabled';
+      grid.innerHTML = `<div class="empty">${enabled?'All tenants within limits':'Throttling disabled'}</div>`;
+      return;
+    }
+    const activeCount = tenants.filter(t=>t.throttled).length;
+    if (statusEl) statusEl.textContent = activeCount>0?activeCount+' throttled':'all clear';
+    grid.innerHTML = '<div class="throttle-grid">'+tenants.map(t => `<div class="throttle-cell">
+      <span class="throttle-dot ${t.throttled?'active':'clear'}"></span>
+      <div class="throttle-info">
+        <div class="throttle-name">${escHtml(t.tenant_id)}</div>
+        <div class="throttle-detail">${t.throttled?'THROTTLED — '+(t.reason||'resource limit'):'Normal'}</div>
+      </div>
+    </div>`).join('')+'</div>';
+  } catch(e) { document.getElementById('throttle-grid').innerHTML='<div class="empty">Unavailable</div>'; }
+}
+
+// ── Rule Modal ─────────────────────────────────────────────────────────
+let ruleModalQuery='', ruleModalAgent='';
+
+function openRuleModal(query, agentId) {
+  ruleModalQuery=query; ruleModalAgent=agentId;
+  document.getElementById('rule-agent-id').value = agentId;
+  document.getElementById('rule-query').textContent = query;
+  document.getElementById('rule-action').value = 'block_table';
+  document.getElementById('rule-modal').classList.add('open');
+  previewRule();
+}
+function closeRuleModal() { document.getElementById('rule-modal').classList.remove('open'); }
+
+async function previewRule() {
+  const action = document.getElementById('rule-action').value;
+  const preview = document.getElementById('rule-yaml-preview');
+  const piiInfo = document.getElementById('rule-pii-info');
+  preview.textContent = 'Loading preview…';
+  try {
+    const resp = await fetch('/api/rules/preview', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:ruleModalQuery,agent_id:ruleModalAgent,action})});
+    const data = await resp.json();
+    preview.textContent = data.yaml_preview||'No preview available';
+    piiInfo.innerHTML = data.has_pii ? `<span style="color:var(--red)">PII detected: ${(data.pii_columns||[]).join(', ')}</span>` : '';
+  } catch(e) { preview.textContent='Error: '+e.message; }
+}
+
+async function applyRule() {
+  const action = document.getElementById('rule-action').value;
+  try {
+    const resp = await fetch('/api/rules/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:ruleModalQuery,agent_id:ruleModalAgent,action})});
+    const data = await resp.json();
+    if (data.status==='ok') { alert('Rule applied!\n\n'+(data.message||'')); closeRuleModal(); refreshViolations(); }
+    else alert('Error: '+(data.error||'unknown'));
+  } catch(e) { alert('Error: '+e.message); }
+}
+
+async function blockQuery(query, agentId) {
+  if (!confirm('Block this query pattern for agent "'+agentId+'"?\n\nTables referenced will be added to blocked_tables.')) return;
+  try {
+    const resp = await fetch('/api/rules/block',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query_pattern:query,agent_id:agentId})});
+    const data = await resp.json();
+    if (data.status==='ok') { alert('Block rule applied. Tables blocked: '+(data.blocked_tables||[]).join(', ')); refreshViolations(); }
+    else alert('Error: '+(data.error||'unknown'));
+  } catch(e) { alert('Error: '+e.message); }
+}
+
+// ── Main Refresh Loop ──────────────────────────────────────────────────
+const proxyStartTime = Date.now();
 let countdown = 5;
+
 async function refresh() {
   const label = document.getElementById('refresh-label');
-  label.textContent = '⟳ refreshing…';
+  if (label) label.textContent = 'refreshing…';
   try {
     const [health, tenants, queries] = await Promise.all([
       fetchJSON('/api/health'),
@@ -1936,226 +1868,46 @@ async function refresh() {
       fetchJSON('/api/queries'),
     ]);
 
-    renderOverview(health.overview || {});
+    renderOverview(health.overview||{});
     renderTenants(tenants);
     renderQueries(queries);
-
-    // Refresh new panels
-    refreshCosts();
-    refreshAnomalies();
-    refreshPredictions();
-    refreshThrottle();
-    refreshViolations();
-    refreshQWMFlags();
-    refreshAPAProposals();
-    refreshAgentStats();
-    refreshAgentConnections();
+    refreshCosts(); refreshAnomalies(); refreshPredictions(); refreshThrottle();
+    refreshViolations(); refreshQWMFlags(); refreshAPAProposals();
+    refreshAgentStats(); refreshAgentConnections();
 
     if (health.pattern) {
-      document.getElementById('pattern-text').textContent = health.pattern;
+      const ptEl = document.getElementById('pattern-text');
+      if (ptEl) ptEl.textContent = health.pattern;
     }
 
-    setStatus(true, `connected · ${health.tenants ?? 0} tenants`);
-    // Update proxy overview bar uptime
-    const upSec = Math.floor((Date.now() - proxyStartTime) / 1000);
-    const upMin = Math.floor(upSec / 60);
-    const upHr = Math.floor(upMin / 60);
-    document.getElementById('po-uptime').textContent = upHr > 0 ? upHr+'h '+upMin%60+'m' : upMin > 0 ? upMin+'m '+upSec%60+'s' : upSec+'s';
-    label.textContent = '✓ live';
-  } catch (e) {
-    setStatus(false, 'error: ' + e.message);
-    label.textContent = '✗ error';
+    setStatus(true, `connected · ${health.tenants??0} tenants`);
+    const upSec = Math.floor((Date.now()-proxyStartTime)/1000);
+    const upMin = Math.floor(upSec/60);
+    const upHr  = Math.floor(upMin/60);
+    const poUp = document.getElementById('po-uptime');
+    if (poUp) poUp.textContent = upHr>0?upHr+'h '+upMin%60+'m':upMin>0?upMin+'m '+upSec%60+'s':upSec+'s';
+    if (label) label.textContent = '✓ live';
+  } catch(e) {
+    setStatus(false, 'error: '+e.message);
+    if (label) label.textContent = '✗ error';
     console.error(e);
   }
 
   countdown = 5;
-  const tick = setInterval(() => {
+  const tick = setInterval(()=>{
     countdown--;
-    if (countdown <= 0) {
-      clearInterval(tick);
-      refresh();
-    } else {
-      document.getElementById('refresh-label').textContent = `⟳ ${countdown}s`;
-    }
-  }, 1000);
+    if (countdown<=0) { clearInterval(tick); refresh(); }
+    else { const l=document.getElementById('refresh-label'); if(l) l.textContent=`${countdown}s`; }
+  },1000);
 }
 
-// ── QWM Risk Flags (F11, observe-only) ──────────────────────────────────
-let allQWMFlags = [];
-
-function renderQWMFlags(filter) {
-  const list = document.getElementById('qwm-flag-list');
-  if (!list) return;
-  const f = (filter || '').toLowerCase().trim();
-  const filtered = f ? allQWMFlags.filter(x => (x.agent || '').toLowerCase().includes(f)) : allQWMFlags;
-  if (filtered.length === 0) {
-    list.innerHTML = `<div class="empty">${f ? 'No QWM flags matching "' + escHtml(f) + '"' : 'No QWM flags yet. QWM scores queries in shadow mode; flags appear when a query exceeds the risk threshold.'}</div>`;
-    return;
-  }
-  const shown = filtered.slice(0, 50);
-  list.innerHTML = shown.map(x => {
-    const ts = x.timestamp ? timeAgo(x.timestamp) : '';
-    const score = (typeof x.score === 'number') ? x.score.toFixed(3) : '—';
-    const feats = (x.top_features || []).join(', ');
-    const tables = (x.tables || []).join(', ');
-    const c = x.conditions || {};
-    const condBits = [];
-    if (typeof c.utilization === 'number') condBits.push(`util ${(c.utilization*100).toFixed(0)}%`);
-    if (c.active_backends) condBits.push(`${c.active_backends} active`);
-    if (c.blocked_backends) condBits.push(`⚠ ${c.blocked_backends} lock-blocked`);
-    if (c.longest_active_ms >= 1000) condBits.push(`longest ${(c.longest_active_ms/1000).toFixed(1)}s`);
-    if (typeof c.cache_hit_ratio === 'number' && c.cache_hit_ratio > 0 && c.cache_hit_ratio < 0.9) condBits.push(`cache ${(c.cache_hit_ratio*100).toFixed(0)}%`);
-    if (c.base_service_ms) condBits.push(`base ${c.base_service_ms.toFixed(0)}ms`);
-    if (c.congestion_x > 1) condBits.push(`×${c.congestion_x.toFixed(1)} congestion`);
-    const predLine = (x.predicted_ms && x.p_breach)
-      ? `<div class="violation-meta" style="color:var(--red);">predicted ~${(x.predicted_ms/1000).toFixed(1)}s · P(SLO breach) ${(x.p_breach*100).toFixed(0)}%</div>`
-      : '';
-    const reasonLine = x.reason
-      ? `<div class="violation-meta" style="color:var(--fg);">${escHtml(x.reason)}</div>` : '';
-    const condLine = condBits.length
-      ? `<div class="violation-meta">DB conditions: ${escHtml(condBits.join(' · '))}</div>` : '';
-    return `<div class="violation-item" style="border-left:3px solid var(--accent);">
-      <span class="violation-icon">⚡</span>
-      <div class="violation-body">
-        <div class="violation-msg">
-          <span class="violation-badge monitored">RISK ${escHtml(score)}</span>
-          Agent <strong>${escHtml(x.agent || '—')}</strong>
-          ${x.operation ? ' [' + escHtml(x.operation) + ']' : ''}
-          ${tables ? ' (tables: ' + escHtml(tables) + ')' : ''}
-        </div>
-        <div class="violation-query" title="${escHtml(x.query)}">${escHtml(x.query)}</div>
-        ${reasonLine}
-        ${predLine}
-        ${condLine}
-        <div class="violation-meta">${feats ? 'top features: ' + escHtml(feats) + ' · ' : ''}${ts}</div>
-      </div>
-    </div>`;
-  }).join('') + (filtered.length > 50 ? `<div class="empty">Showing 50 of ${filtered.length}</div>` : '');
-}
-
-async function refreshQWMFlags() {
-  try {
-    const data = await fetchJSON('/api/qwm/flags');
-    allQWMFlags = data.flags || [];
-    const countEl = document.getElementById('qwm-flag-count');
-    if (countEl) countEl.textContent = allQWMFlags.length > 0 ? allQWMFlags.length + ' flagged' : 'None';
-    const fe = document.getElementById('qwm-filter');
-    renderQWMFlags(fe ? fe.value : '');
-  } catch(e) {
-    const list = document.getElementById('qwm-flag-list');
-    if (list) list.innerHTML = '<div class="empty">QWM flags endpoint unavailable</div>';
-  }
-}
-
-(function(){
-  const fe = document.getElementById('qwm-filter');
-  if (fe) fe.addEventListener('input', function(){ renderQWMFlags(this.value); });
-})();
-
-// ── APA Proposals (local visibility, no control plane needed) ──────────────
-async function refreshAPAProposals() {
-  const list = document.getElementById('apa-list');
-  if (!list) return;
-  try {
-    const data = await fetchJSON('/api/apa/proposals');
-    const agents = data.agents || [];
-    const runs = data.recent_runs || [];
-    const pending = data.pending_total || 0;
-    const countEl = document.getElementById('apa-pending-count');
-    if (countEl) countEl.textContent = pending > 0 ? pending + ' pending review' : (agents.length ? 'all clear' : 'no data');
-
-    let html = '';
-
-    // File-drop proposals — apply-ready downloadable YAML, no git/PR required.
-    try {
-      const fd = await fetchJSON('/api/apa/proposals/files');
-      const proposals = (fd.proposals || []).filter(p => p.status !== 'dismissed');
-      if (proposals.length) {
-        html += '<div class="violation-meta" style="margin:4px 0; color:var(--muted);">Proposed policy files (download &amp; review)</div>';
-        html += proposals.slice(0, 20).map(p => {
-          const conf = (typeof p.confidence === 'number') ? `${(p.confidence*100).toFixed(0)}%` : '—';
-          const ts = p.created_at ? timeAgo(p.created_at) : '';
-          const applied = p.status === 'applied';
-          const badge = applied ? '<span class="violation-badge monitored">APPLIED</span>' : '<span class="violation-badge" style="background:rgba(72,187,120,0.18);color:#48bb78;">READY</span>';
-          return `<div class="violation-item" style="border-left:3px solid #48bb78;">
-            <span class="violation-icon">📄</span>
-            <div class="violation-body">
-              <div class="violation-msg">${badge} Agent <strong>${escHtml(p.agent_id)}</strong> · confidence ${conf} · ${p.diff_lines||0} diff lines</div>
-              ${p.yaml_diff ? `<pre class="violation-query" style="white-space:pre-wrap; max-height:160px; overflow:auto;">${escHtml(p.yaml_diff)}</pre>` : ''}
-              <div class="violation-meta" style="display:flex; gap:8px; align-items:center; margin-top:4px;">
-                <a href="${escHtml(p.download_url)}" style="color:var(--accent);" title="Download proposed policies.yaml">⬇️ Download YAML</a>
-                ${applied ? '' : `<button onclick="apaProposalAction('${escHtml(p.id)}','apply')" style="cursor:pointer; background:rgba(72,187,120,0.15); border:1px solid rgba(72,187,120,0.4); color:#48bb78; border-radius:4px; padding:2px 8px; font-size:11px;">Mark applied</button>`}
-                <button onclick="apaProposalAction('${escHtml(p.id)}','dismiss')" style="cursor:pointer; background:var(--bg); border:1px solid var(--border); color:var(--muted); border-radius:4px; padding:2px 8px; font-size:11px;">Dismiss</button>
-                <span>${ts}</span>
-              </div>
-            </div>
-          </div>`;
-        }).join('');
-      }
-    } catch(e) { /* file-drop endpoint optional */ }
-
-    // Pending review queue — the queries APA wants a human to decide on.
-    const pendingItems = [];
-    agents.forEach(a => (a.pending_review || []).forEach(fp => pendingItems.push({agent: a.agent_id, fp})));
-    if (pendingItems.length) {
-      html += '<div class="violation-meta" style="margin:4px 0; color:var(--muted);">Pending review</div>';
-      html += pendingItems.slice(0, 30).map(({agent, fp}) => `
-        <div class="violation-item" style="border-left:3px solid var(--accent);">
-          <span class="violation-icon">⏳</span>
-          <div class="violation-body">
-            <div class="violation-msg"><span class="violation-badge monitored">PENDING</span> Agent <strong>${escHtml(agent)}</strong> ${fp.verdict ? '· ' + escHtml(fp.verdict) : ''}</div>
-            <div class="violation-query" title="${escHtml(fp.sql || '')}">${escHtml(fp.sql || fp.hash || '')}</div>
-            ${fp.reason ? `<div class="violation-meta">${escHtml(fp.reason)}</div>` : ''}
-            <div class="violation-meta">seen ${fp.seen || 0}× · fingerprint ${escHtml((fp.hash||'').slice(0,16))}</div>
-          </div>
-        </div>`).join('');
-    }
-
-    // Recent APA runs — from the local audit log.
-    if (runs.length) {
-      html += '<div class="violation-meta" style="margin:8px 0 4px; color:var(--muted);">Recent APA runs</div>';
-      html += runs.slice(0, 10).map(r => {
-        const ts = r.timestamp ? timeAgo(r.timestamp) : '';
-        const conf = (typeof r.confidence === 'number' && r.confidence > 0) ? ` · confidence ${(r.confidence*100).toFixed(0)}%` : '';
-        const pr = r.pr_url ? ` · <a href="${escHtml(r.pr_url)}" target="_blank" style="color:var(--accent);">PR</a>` : '';
-        const err = r.error ? `<div class="violation-meta" style="color:var(--red);">error: ${escHtml(r.error)}</div>` : '';
-        return `<div class="violation-item">
-          <span class="violation-icon">${r.error ? '🔴' : '🧠'}</span>
-          <div class="violation-body">
-            <div class="violation-msg">Agent <strong>${escHtml(r.agent_id || '—')}</strong> · ${r.pending_count || 0} pending${conf}${pr}</div>
-            ${err}
-            <div class="violation-meta">${escHtml(r.provider || '')} · ${ts}</div>
-          </div>
-        </div>`;
-      }).join('');
-    }
-
-    list.innerHTML = html || '<div class="empty">No APA activity yet. Run <code>faultwall apa sync</code> then <code>faultwall apa run</code> to generate proposals.</div>';
-  } catch(e) {
-    list.innerHTML = '<div class="empty">APA endpoint unavailable</div>';
-  }
-}
-
-// Apply/dismiss a file-drop APA proposal, then refresh the panel.
-async function apaProposalAction(id, action) {
-  try {
-    await fetch('/api/apa/proposals/files/' + encodeURIComponent(id) + '/' + action, { method: 'POST' });
-  } catch(e) { /* best-effort */ }
-  refreshAPAProposals();
-}
-
-// Sparklines on separate interval (every 30s)
+setInterval(refreshAlerts, 5000);
 setInterval(refreshSparklines, 30000);
 
-const proxyStartTime = Date.now();
-
 document.addEventListener('DOMContentLoaded', async () => {
-  // Detect proxy mode before first render
   try {
     const h = await fetchJSON('/api/health');
-    if (h.mode === 'proxy') {
-      document.body.classList.add('proxy-mode');
-    }
+    if (h.mode==='proxy') document.body.classList.add('proxy-mode');
   } catch(e) {}
   loadPausedAgents();
   refresh();
