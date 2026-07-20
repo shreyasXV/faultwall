@@ -234,6 +234,49 @@ func TestRedTeamF0toF8(t *testing.T) {
 			},
 			wantReasonContains: "blocked_operation",
 		},
+		{
+			family: "G1-DO-exec-drop",
+			desc:   "dynamic EXECUTE inside DO block hides DROP operation",
+			query:  `DO $$ BEGIN EXECUTE 'DROP TABLE public.articles'; END $$`,
+			// DO (outer) allowed; only the DROP hidden in the EXECUTE string blocked.
+			engine: engineBlocking([]string{"DROP"}, nil, nil),
+			check: func(t *testing.T, p *ParsedQuery) {
+				if !hasStr(p.Operations, "DROP") {
+					t.Errorf("G1: DROP inside dynamic EXECUTE not surfaced; Operations=%v", p.Operations)
+				}
+			},
+			wantReasonContains: "blocked_operation",
+		},
+		{
+			family: "G1-DO-exec-table",
+			desc:   "dynamic EXECUTE inside DO block hides read of blocked users table",
+			query:  `DO $$ BEGIN EXECUTE 'INSERT INTO public.feedback SELECT password_hash FROM public.users'; END $$`,
+			// DO allowed; only users table blocked (referenced inside EXECUTE string).
+			engine: engineBlocking(nil, []string{"public.users"}, nil),
+			check: func(t *testing.T, p *ParsedQuery) {
+				if !hasStrContains(p.Tables, "users") {
+					t.Errorf("G1: users table inside dynamic EXECUTE not surfaced; Tables=%v", p.Tables)
+				}
+			},
+			wantReasonContains: "blocked_table",
+		},
+		{
+			family: "G2-set-semicolon-in-string",
+			desc:   "leading SET with ; inside string literal must not desync parsing",
+			query:  `SET application_name='x;y'; SELECT password_hash FROM public.users`,
+			// SELECT allowed; only users table blocked. Must be caught via AST
+			// (previously the naive ; split mangled the query onto the regex path).
+			engine: engineBlocking(nil, []string{"public.users"}, nil),
+			check: func(t *testing.T, p *ParsedQuery) {
+				if !p.UsedAST {
+					t.Errorf("G2: query fell to regex path (AST desync); want AST parse")
+				}
+				if !hasStrContains(p.Tables, "users") {
+					t.Errorf("G2: users table not surfaced; Tables=%v", p.Tables)
+				}
+			},
+			wantReasonContains: "blocked_table",
+		},
 	}
 
 	for _, tt := range tests {
