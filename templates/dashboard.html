@@ -1616,7 +1616,7 @@ async function refreshAPAProposals() {
     // Recent APA runs
     if (runs.length) {
       if (html) html += '<div style="height:1px;background:var(--border);margin:4px 0;"></div>';
-      html += '<div class="event-list">'+runs.slice(0,10).map(r => {
+      html += '<div class="event-list">'+runs.filter(r=>!r.error).slice(0,10).map(r => {
         const ts = r.timestamp ? timeAgo(r.timestamp) : '';
         const conf = typeof r.confidence==='number'&&r.confidence>0 ? ` · confidence ${(r.confidence*100).toFixed(0)}%` : '';
         const pr = r.pr_url ? ` · <a href="${escHtml(r.pr_url)}" target="_blank">PR</a>` : '';
