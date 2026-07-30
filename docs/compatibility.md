@@ -8,12 +8,12 @@ FaultWall is a transparent L7 proxy that sits between your application (or AI ag
 
 | Platform | Status | Notes |
 |---|---|---|
-| Self-hosted PostgreSQL 16 / 17 | ✅ Supported | No special config |
-| PgBouncer (transaction & session mode) | ✅ Supported | Transparent through the pooler |
-| AWS RDS for PostgreSQL | ✅ Supported | Set `channel_binding=disable` (see below) |
-| AWS Aurora PostgreSQL | ✅ Supported | Set `channel_binding=disable` |
-| Neon (serverless) | ✅ Supported | Set `channel_binding=disable`; SNI routing works out of the box |
-| Supabase (pooler endpoint) | ✅ Supported | Leave `channel_binding` at its default; see notes below |
+| Self-hosted PostgreSQL 16 / 17 | Supported | No special config |
+| PgBouncer (transaction & session mode) | Supported | Transparent through the pooler |
+| AWS RDS for PostgreSQL | Supported | Set `channel_binding=disable`(see below) |
+| AWS Aurora PostgreSQL | Supported | Set `channel_binding=disable`|
+| Neon (serverless) | Supported | Set `channel_binding=disable`; SNI routing works out of the box |
+| Supabase (pooler endpoint) | Supported | Leave `channel_binding`at its default; see notes below |
 
 FaultWall negotiates the PostgreSQL wire-protocol SSLRequest handshake with the upstream, so managed providers that require TLS connect cleanly.
 

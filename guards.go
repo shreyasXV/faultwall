@@ -86,7 +86,7 @@ func setUnqualifiedAllowNormalization(on bool) {
 // the proxy falls back to the original (stricter) isTableAllowed behavior.
 func InitUnqualifiedAllowGuard() {
 	if !unqualifiedAllowNormalizationCandidatePass() {
-		log.Printf("⚠️  F2 self-check FAILED: unqualified-name allow-path normalization disabled. "+
+		log.Printf("WARN: F2 self-check FAILED: unqualified-name allow-path normalization disabled. "+
 			"isTableAllowed will fall back to the prior (block-on-bare-name) behavior. "+
 			"Agents emitting unqualified ORM table names may be over-blocked under public.* allow lists. "+
 			"This is a fail-safe (closed) state, not a security regression.")
@@ -94,7 +94,7 @@ func InitUnqualifiedAllowGuard() {
 		return
 	}
 	unqualifiedAllowNormalizationOn.Store(true)
-	log.Printf("✅ F2 guard active: unqualified table names will be normalized to %q for ALLOW matching only "+
+	log.Printf("F2 guard active: unqualified table names will be normalized to %q for ALLOW matching only "+
 		"(BLOCK matching is unchanged).", defaultSchemaForAllowMatch+".<name>")
 }
 
@@ -208,13 +208,13 @@ func InitRequireAuthTokenGuard() {
 	requireAuthTokenOn.Store(true)
 	if !requireAuthTokenSelfCheckPass() {
 		requireAuthTokenOn.Store(false)
-		log.Printf("⚠️  F3 self-check FAILED: require_auth_token enforcement could not be verified " +
+		log.Printf("WARN: F3 self-check FAILED: require_auth_token enforcement could not be verified "+
 			"(known-tokenless identity was not rejected by the enforcement check). " +
 			"Falling back to WARN-ONLY mode so a buggy enforcer does not give a false sense of " +
 			"security. Set auth_token on every agent and investigate before re-enabling.")
 		return
 	}
-	log.Printf("🔐 F3 guard active: require_auth_token=true — agents without a verified token will be REJECTED.")
+	log.Printf("F3 guard active: require_auth_token=true — agents without a verified token will be REJECTED.")
 }
 
 // requireAuthTokenSelfCheckPass verifies the enforcement function rejects
@@ -262,7 +262,7 @@ func LogIdentitySpoofWarning(cfg *PolicyConfig) bool {
 	if len(tokenless) == 0 {
 		return false
 	}
-	log.Printf("⚠️  IDENTITY SPOOFING WARNING: %d agent(s) have NO auth_token configured: %s. "+
+	log.Printf("WARN: IDENTITY SPOOFING WARNING: %d agent(s) have NO auth_token configured: %s. "+
 		"Agent identity is derived from PostgreSQL application_name, which is fully spoofable. "+
 		"Without an auth_token, any client can impersonate these agent IDs and inherit their "+
 		"mission permissions. Set 'auth_token: <secret>' under each agent in policies.yaml, then "+
@@ -319,7 +319,7 @@ func RunDBIsolationProbe(upstreamAddr string) dbIsolationProbeResult {
 
 	res := dbIsolationProbeResult{Address: upstreamAddr}
 	if upstreamAddr == "" {
-		log.Printf("⚠️  F9 DB-port isolation probe SKIPPED: no upstream address configured. " +
+		log.Printf("WARN: F9 DB-port isolation probe SKIPPED: no upstream address configured. "+
 			"This is a hard-isolation REQUIREMENT regardless: agents must only reach the proxy, " +
 			"not the database port directly.")
 		res.ProbeError = "no upstream address"
@@ -347,7 +347,7 @@ func RunDBIsolationProbe(upstreamAddr string) dbIsolationProbeResult {
 		}
 		// Probe-itself-error: must NOT crash the proxy.
 		res.ProbeError = errStr
-		log.Printf("⚠️  F9 DB-port isolation probe could not run for %s: %v. "+
+		log.Printf("WARN: F9 DB-port isolation probe could not run for %s: %v. "+
 			"Continuing startup — this check is best-effort and non-fatal. DB-port isolation remains a "+
 			"HARD REQUIREMENT: agents must only be able to reach the proxy listener, not the upstream "+
 			"database port directly. Verify network policy / security groups / firewall rules manually.",
@@ -356,7 +356,7 @@ func RunDBIsolationProbe(upstreamAddr string) dbIsolationProbeResult {
 	}
 	conn.Close()
 	res.Reachable = true
-	log.Printf("⚠️  F9 DB-port isolation probe: upstream %s IS DIRECTLY REACHABLE from the proxy host. "+
+	log.Printf("WARN: F9 DB-port isolation probe: upstream %s IS DIRECTLY REACHABLE from the proxy host. "+
 		"This is best-effort topology info: it CONFIRMS the proxy can reach the DB (good), but it does "+
 		"NOT prove that other hosts/agents are blocked. DB-port isolation is a HARD REQUIREMENT — if "+
 		"agents can reach %s without going through the proxy, all SQL-level enforcement is bypassed and "+

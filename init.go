@@ -113,7 +113,7 @@ func runInit(args []string) error {
 		return fmt.Errorf("failed to write %s: %w", output, err)
 	}
 
-	fmt.Printf("✅ Created %s (%s template, agent: %s)\n", output, template, agentName)
+	fmt.Printf("Created %s (%s template, agent: %s)\n", output, template, agentName)
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Println("  1. Start FaultWall:")
@@ -138,7 +138,7 @@ func isTTY(f *os.File) bool {
 func runInitWizard() (template, agent string, err error) {
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Println("🔒 FaultWall Setup Wizard")
+	fmt.Println("FaultWall Setup Wizard")
 	fmt.Println()
 	fmt.Println("Let's configure your policy file. Press Ctrl+C to cancel.")
 	fmt.Println()
@@ -162,7 +162,7 @@ func runInitWizard() (template, agent string, err error) {
 	case "3", "permissive":
 		template = "permissive"
 	default:
-		fmt.Printf("  ⚠️  unknown choice %q, defaulting to balanced\n", choice)
+		fmt.Printf("WARN: unknown choice %q, defaulting to balanced\n", choice)
 		template = "balanced"
 	}
 	fmt.Printf("  → %s\n\n", template)
@@ -183,7 +183,7 @@ func runInitWizard() (template, agent string, err error) {
 		agent = "my-agent"
 	}
 	if strings.ContainsAny(agent, ": \t") {
-		fmt.Printf("  ⚠️  invalid characters (spaces/colons), using 'my-agent'\n")
+		fmt.Printf("WARN: invalid characters (spaces/colons), using 'my-agent'\n")
 		agent = "my-agent"
 	}
 	fmt.Printf("  → %s\n\n", agent)

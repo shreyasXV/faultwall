@@ -300,7 +300,7 @@ func InitSearchPathAwareAllowGuard() {
 	if !searchPathAwareAllowSelfCheckPassFn() {
 		searchPathAwareAllowOn.Store(false)
 		_ = prev
-		log.Printf("⚠️  REAL-F2 self-check FAILED: per-connection search_path tracking disabled. "+
+		log.Printf("WARN: REAL-F2 self-check FAILED: per-connection search_path tracking disabled. "+
 			"Falling back to shipped F2 (public-only ALLOW normalization, guard=%v). "+
 			"Agents that issue `SET search_path TO <non-public>` may be over-blocked or "+
 			"under-validated. This is fail-safe (closed): we keep the prior, validated behavior "+
@@ -309,7 +309,7 @@ func InitSearchPathAwareAllowGuard() {
 		return
 	}
 	searchPathAwareAllowOn.Store(true)
-	log.Printf("✅ REAL-F2 guard active: per-connection search_path is tracked and used for " +
+	log.Printf("REAL-F2 guard active: per-connection search_path is tracked and used for "+
 		"unqualified ALLOW matching (BLOCK matching is unchanged — still considers all " +
 		"schemas in search_path). Default search_path is [\"public\"] until the agent " +
 		"issues SET search_path.")

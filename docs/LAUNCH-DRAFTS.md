@@ -15,12 +15,12 @@ Three pieces for Shreyas's review. Nothing posted yet — all drafts. Revise or 
 
 | Deployment | Status |
 |---|---|
-| Self-hosted Postgres 12+ | 🟢 Green |
-| AWS RDS / Aurora | 🟢 Green |
-| Neon (serverless) | 🟢 Green |
-| PgBouncer (tx + session) | 🟢 Green |
-| Supabase pooler | 🟡 Yellow ([workaround](docs/compatibility.md#supabase)) |
-| Cloud SQL · CrunchyBridge · DO MPG | 🟢 Expected ¹ |
+| Self-hosted Postgres 12+ | OK Green |
+| AWS RDS / Aurora | OK Green |
+| Neon (serverless) | OK Green |
+| PgBouncer (tx + session) | OK Green |
+| Supabase pooler | WARN Yellow ([workaround](docs/compatibility.md#supabase)) |
+| Cloud SQL · CrunchyBridge · DO MPG | OK Expected ¹ |
 
 ¹ Same Postgres wire protocol as validated providers; tested path exists, instance not provisioned.
 
@@ -100,11 +100,11 @@ Not because proxying is hard — because every managed Postgres provider has its
 
 For the last month I've been testing FaultWall (the Postgres firewall for AI agents I've been building) against every managed provider I could get access to:
 
-✓ AWS RDS / Aurora
-✓ Neon
-✓ PgBouncer (transaction + session)
-✓ Self-hosted PG
-⚠ Supabase (works, with a documented quirk we're fixing in v0.5)
+ok AWS RDS / Aurora
+ok Neon
+ok PgBouncer (transaction + session)
+ok Self-hosted PG
+WARN: Supabase (works, with a documented quirk we're fixing in v0.5)
 
 v0.4 just shipped. +0.14ms overhead on cloud latency. 10/10 attack-suite block rate.
 
@@ -137,6 +137,6 @@ Hold Show HN + LinkedIn until Docker image publish is confirmed — HN readers w
 ## Open questions for Shreyas
 
 1. Which Show HN title (A/B/C)?
-2. LinkedIn post — keep the ⚠ emoji or strip? I used it sparingly but LinkedIn-norms vary
+2. LinkedIn post — keep the WARN: emoji or strip? I used it sparingly but LinkedIn-norms vary
 3. Anything in the compat matrix you want to qualify differently before it's on HN's front page? "Cloud SQL / CrunchyBridge / DO MPG = Expected" is an honest claim but not a tested one — if you'd rather I mark those as "untested" or drop them, say so now
 4. Post from your personal account or FaultWall account on both HN and LinkedIn?

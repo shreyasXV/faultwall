@@ -243,7 +243,7 @@ func validateConfig(cfg APAConfig) error {
 
 // notifySlack sends a one-line Slack notification about a new APA PR.
 func notifySlack(webhookURL, agentID, prURL string, confidence float64) {
-	msg := fmt.Sprintf(`{"text":"🤖 APA proposal for agent *%s* (confidence %.0f%%): <%s>"}`,
+	msg := fmt.Sprintf(`{"text":"APA proposal for agent *%s* (confidence %.0f%%): <%s>"}`,
 		agentID, confidence*100, prURL)
 	// Fire-and-forget; errors are logged but don't fail the run.
 	if err := postJSON(webhookURL, []byte(msg)); err != nil {

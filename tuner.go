@@ -292,7 +292,7 @@ func RunTuner(generations, populationSize int, mutationRate float64) TunerResult
 	bestEver = baselineResult
 	bestEver.Generation = 0
 
-	fmt.Printf("  📊 Baseline (hand-tuned): score=%.2f detect=%.0f%% fp=%d speed=%.1fs\n\n",
+	fmt.Printf("Baseline (hand-tuned): score=%.2f detect=%.0f%% fp=%d speed=%.1fs\n\n",
 		baselineResult.Score, baselineResult.DetectionRate*100, baselineResult.FalsePositives, baselineResult.AvgDetectTime)
 
 	for gen := 0; gen < generations; gen++ {
@@ -312,10 +312,10 @@ func RunTuner(generations, populationSize int, mutationRate float64) TunerResult
 		if results[0].Score > bestEver.Score {
 			bestEver = results[0]
 			bestEver.Generation = gen
-			fmt.Printf("  🔥 Gen %3d: NEW BEST score=%.2f detect=%.0f%% fp=%d speed=%.1fs\n",
+			fmt.Printf("Gen %3d: NEW BEST score=%.2f detect=%.0f%% fp=%d speed=%.1fs\n",
 				gen, results[0].Score, results[0].DetectionRate*100, results[0].FalsePositives, results[0].AvgDetectTime)
 		} else if gen%10 == 0 {
-			fmt.Printf("  📈 Gen %3d: best=%.2f detect=%.0f%% fp=%d\n",
+			fmt.Printf("Gen %3d: best=%.2f detect=%.0f%% fp=%d\n",
 				gen, results[0].Score, results[0].DetectionRate*100, results[0].FalsePositives)
 		}
 
@@ -347,7 +347,7 @@ func RunTuner(generations, populationSize int, mutationRate float64) TunerResult
 
 	fmt.Println()
 	fmt.Println("═══════════════════════════════════════════════════════════════")
-	fmt.Println("  ✅ OPTIMIZATION COMPLETE")
+	fmt.Println("OPTIMIZATION COMPLETE")
 	fmt.Println("═══════════════════════════════════════════════════════════════")
 	fmt.Printf("  Best score:      %.2f (baseline: %.2f) → %.1f%% improvement\n",
 		bestEver.Score, baselineResult.Score,
@@ -384,7 +384,7 @@ func printDiff(name string, old, new int) {
 	arrow := "→"
 	marker := "  "
 	if old != new {
-		marker = "✦ "
+		marker = "* "
 	}
 	fmt.Printf("  %s%-22s %5d %s %-5d\n", marker, name, old, arrow, new)
 }
@@ -393,7 +393,7 @@ func printDiffF(name string, old, new float64) {
 	arrow := "→"
 	marker := "  "
 	if math.Abs(old-new) > 0.01 {
-		marker = "✦ "
+		marker = "* "
 	}
 	fmt.Printf("  %s%-22s %8.1f %s %-8.1f\n", marker, name, old, arrow, new)
 }

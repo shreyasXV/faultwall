@@ -13,10 +13,10 @@ run_case () {
   local result
   if [[ $rc -eq 0 ]]; then result="allow"; else result="deny"; fi
   if [[ "$result" == "$expect" ]]; then
-    echo "✅ [$label] expected=$expect got=$result"
+    echo "[$label] expected=$expect got=$result"
     PASS=$((PASS+1))
   else
-    echo "❌ [$label] expected=$expect got=$result :: $out"
+    echo "FAIL: [$label] expected=$expect got=$result :: $out"
     FAIL=$((FAIL+1))
   fi
 }

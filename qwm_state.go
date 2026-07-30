@@ -69,7 +69,7 @@ func (s *StateSampler) Snapshot() QWMInfraState {
 // Start launches the sampling goroutine. Safe to call once.
 func (s *StateSampler) Start() {
 	if s.db == nil {
-		log.Printf("⚠️  QWM state sampler: no monitoring DB — world model runs on queuing prior only")
+		log.Printf("WARN: QWM state sampler: no monitoring DB — world model runs on queuing prior only")
 		return
 	}
 	go func() {
@@ -192,7 +192,7 @@ func (s *StateSampler) logSampleErr(which string, err error) {
 	// connection is down (proxy keeps serving on the queuing prior meanwhile).
 	n := atomic.AddInt64(&stateSampleErrCount, 1)
 	if n == 1 || n%60 == 0 {
-		log.Printf("⚠️  QWM state sample (%s) failed (#%d): %v", which, n, err)
+		log.Printf("WARN: QWM state sample (%s) failed (#%d): %v", which, n, err)
 	}
 }
 

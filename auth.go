@@ -13,7 +13,7 @@ import (
 func bearerAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	token := os.Getenv("FAULTWALL_API_TOKEN")
 	if token == "" {
-		log.Println("⚠️  FAULTWALL_API_TOKEN not set — sensitive API endpoints are unauthenticated")
+		log.Println("WARN: FAULTWALL_API_TOKEN not set — sensitive API endpoints are unauthenticated")
 		return next // no auth required
 	}
 

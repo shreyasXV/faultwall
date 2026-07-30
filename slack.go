@@ -44,19 +44,19 @@ func (s *SlackNotifier) SendAlert(a *Alert) {
 	s.mu.Unlock()
 
 	color := "#f5c542" // yellow = warning
-	icon := "⚠️"
+	icon := "WARN:"
 	levelStr := "WARNING"
 	if a.Level == AlertCritical {
 		color = "#e53e3e"
-		icon = "🔴"
+		icon = "FAIL"
 		levelStr = "CRITICAL"
 	} else if a.Level == AlertInfo {
 		color = "#718096"
-		icon = "ℹ️"
+		icon = "INFO:"
 		levelStr = "INFO"
 	}
 
-	title := fmt.Sprintf("[FaultWall 👻] %s %s: %s", icon, levelStr, a.Message)
+	title := fmt.Sprintf("[FaultWall ] %s %s: %s", icon, levelStr, a.Message)
 	text := fmt.Sprintf("Metric: `%s` | Value: `%.2f` | Threshold: `%.2f` | Tenant: `%s`",
 		a.Metric, a.Value, a.Threshold, a.TenantID)
 
@@ -69,7 +69,7 @@ func (s *SlackNotifier) SendResolved(a *Alert) {
 	if s == nil {
 		return
 	}
-	title := fmt.Sprintf("[FaultWall 👻] ✅ RESOLVED: %s", a.Message)
+	title := fmt.Sprintf("[FaultWall ] RESOLVED: %s", a.Message)
 	text := fmt.Sprintf("Alert resolved for tenant `%s`. Metric `%s` is back within threshold.", a.TenantID, a.Metric)
 	payload := slackPayload(title, text, "#38a169")
 	s.send(payload)
@@ -84,7 +84,7 @@ func slackPayload(title, text, color string) map[string]interface{} {
 				"title":    title,
 				"text":     text,
 				"ts":       time.Now().Unix(),
-				"footer":   "FaultWall 👻",
+				"footer": "FaultWall ",
 			},
 		},
 	}

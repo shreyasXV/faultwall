@@ -180,7 +180,7 @@ func (am *AlertManager) Evaluate(data CollectorData, maxConns int) {
 						Active:    true,
 					}
 					am.active[alertKey] = a
-					log.Printf("🚨 Alert fired: %s", msg)
+					log.Printf("ALERT: Alert fired: %s", msg)
 					go am.notify(a, false)
 				}
 			}
@@ -196,7 +196,7 @@ func (am *AlertManager) Evaluate(data CollectorData, maxConns int) {
 			// Add to history
 			am.addHistory(a)
 			delete(am.active, key)
-			log.Printf("✅ Alert resolved: %s", a.Message)
+			log.Printf("Alert resolved: %s", a.Message)
 			go am.notify(a, true)
 		}
 	}
