@@ -2,11 +2,21 @@ package main
 
 // Control-plane APA proposal client.
 //
-// PRIVACY CONTRACT: this client ships ONLY a proposed policy YAML diff (a
-// human-review artifact, never query/row data) plus metadata (agent id, title,
-// confidence, diff line count) to the control plane's POST /v1/apa/propose.
-// It deliberately has no field carrying observations, query text, bound params,
-// or row data. apa_client_test.go asserts this via JSON marshaling.
+// PRIVACY CONTRACT: this client ships ONLY a REDACTED proposed policy YAML diff
+// plus metadata (agent id, title, confidence, diff line count) to the control
+// plane's POST /v1/apa/propose.
+//
+// The diff is not automatically safe. A policies.yaml carries FingerprintRule
+// entries whose `sql:` field holds the raw query text recorded by
+// recordObservation (proxy.go) — literals, WHERE predicates and all. Shipping a
+// raw diff or the full merged YAML therefore exfiltrates customer query text to
+// the control plane, contradicting "your queries stay yours". So every `sql:`
+// value is replaced with a redaction sentinel before the request is built, and
+// the full merged YAML is never uploaded at all (it stays a local file-drop
+// artifact for the operator).
+//
+// apa_client_test.go asserts both invariants: field allowlist via JSON
+// marshaling, and no `sql:` content surviving redaction.
 //
 // PERFORMANCE CONTRACT: APA is already an out-of-band reasoning loop (never on
 // the query hot path). Even so, proposal upload happens on a background
@@ -32,7 +42,6 @@ type apaProposalPayload struct {
 	AgentID        string  `json:"agent_id"`
 	Title          string  `json:"title"`
 	YAMLDiff       string  `json:"yaml_diff"`
-	MergedYAML     string  `json:"merged_yaml"`
 	Confidence     float64 `json:"confidence"`
 	DiffLines      int     `json:"diff_lines"`
 }
@@ -77,8 +86,7 @@ func (c *APAProposalClient) post(rep agent.ProposalReport) {
 		InstallationID: c.cfg.InstallationID,
 		AgentID:        rep.AgentID,
 		Title:          rep.Title,
-		YAMLDiff:       rep.YAMLDiff,
-		MergedYAML:     rep.MergedYAML,
+		YAMLDiff:       redactSQLFromYAMLDiff(rep.YAMLDiff),
 		Confidence:     rep.Confidence,
 		DiffLines:      rep.DiffLines,
 	})

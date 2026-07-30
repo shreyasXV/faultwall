@@ -196,7 +196,7 @@ func runIncidentEngine() {
 	for {
 		elapsed := int(time.Since(startTime).Seconds())
 		if elapsed > 400 {
-			fmt.Println("\n✅ Simulation complete (6+ minutes). Press Ctrl+C to stop.")
+			fmt.Println("\n Simulation complete (6+ minutes). Press Ctrl+C to stop.")
 			return
 		}
 
@@ -205,7 +205,7 @@ func runIncidentEngine() {
 		for idx, inc := range activeIncidents {
 			if elapsed > inc.EndSec {
 				delete(activeIncidents, idx)
-				fmt.Printf("\n  ✅ [%3ds] RESOLVED: %s\n\n", elapsed, inc.Description)
+				fmt.Printf("\n [%3ds] RESOLVED: %s\n\n", elapsed, inc.Description)
 			}
 		}
 		// Activate new incidents
@@ -214,7 +214,7 @@ func runIncidentEngine() {
 			if elapsed >= inc.StartSec && elapsed <= inc.EndSec && !announced[key] {
 				activeIncidents[inc.TenantIdx] = inc
 				announced[key] = true
-				fmt.Printf("\n  🔥 [%3ds] INCIDENT: %s\n\n", elapsed, inc.Description)
+				fmt.Printf("\n [%3ds] INCIDENT: %s\n\n", elapsed, inc.Description)
 			}
 		}
 		mu.Unlock()
@@ -233,7 +233,7 @@ func runStatsReporter(db *sql.DB) {
 			time.Sleep(15 * time.Second)
 			elapsed := int(time.Since(startTime).Seconds())
 			countMu.Lock()
-			fmt.Printf("  📊 [%3ds] Queries: ", elapsed)
+			fmt.Printf("[%3ds] Queries: ", elapsed)
 			total := int64(0)
 			for _, p := range profiles {
 				c := counts[p.Schema]
@@ -468,6 +468,6 @@ func ensureSchema(db *sql.DB, schema string) {
 				statuses[rand.Intn(len(statuses))],
 				rand.Intn(10)+1)
 		}
-		fmt.Printf("  ✅ Seeded %s: 200 users, 2000 orders\n", schema)
+		fmt.Printf("Seeded %s: 200 users, 2000 orders\n", schema)
 	}
 }

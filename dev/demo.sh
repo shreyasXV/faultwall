@@ -23,7 +23,7 @@ FAIL=0
 banner() {
     echo ""
     echo -e "${CYAN}${BOLD}╔══════════════════════════════════════════════════╗${RESET}"
-    echo -e "${CYAN}${BOLD}║        🛡️  FaultWall Demo — Attack Scenarios     ║${RESET}"
+    echo -e "${CYAN}${BOLD}║ FaultWall Demo — Attack Scenarios ║${RESET}"
     echo -e "${CYAN}${BOLD}╚══════════════════════════════════════════════════╝${RESET}"
     echo ""
 }
@@ -34,13 +34,13 @@ wait_for_proxy() {
         if PGPASSWORD="$PG_PASS" psql -h "$PROXY_HOST" -p "$PROXY_PORT" -U "$PG_USER" -d "$PG_DB" \
             -o /dev/null -c "SELECT 1" \
             --set=application_name="agent:demo-agent:mission:read-feedback:token:demo-secret-789" 2>/dev/null; then
-            echo -e "${GREEN}✅ Proxy is ready!${RESET}"
+            echo -e "${GREEN} Proxy is ready!${RESET}"
             echo ""
             return 0
         fi
         sleep 1
     done
-    echo -e "${RED}❌ Proxy not ready after 30s${RESET}"
+    echo -e "${RED}Proxy not ready after 30s${RESET}"
     exit 1
 }
 
@@ -73,10 +73,10 @@ test_case() {
     fi
 
     if [ "$expect_blocked" = "BLOCKED" ]; then
-        expected_icon="🚫"
+        expected_icon="BLOCKED"
         expected_label="BLOCKED"
     else
-        expected_icon="✅"
+        expected_icon=""
         expected_label="ALLOWED"
     fi
 
@@ -84,16 +84,16 @@ test_case() {
 
     if [ "$actual" = "$expect_blocked" ]; then
         if [ "$actual" = "BLOCKED" ]; then
-            echo -e "   Actual:   ${RED}🚫 BLOCKED${RESET}  ${GREEN}✓ PASS${RESET}"
+            echo -e "Actual: ${RED}BLOCKED${RESET} ${GREEN}PASS${RESET}"
         else
-            echo -e "   Actual:   ${GREEN}✅ ALLOWED${RESET}  ${GREEN}✓ PASS${RESET}"
+            echo -e "Actual: ${GREEN}ALLOWED${RESET} ${GREEN}PASS${RESET}"
         fi
         PASS=$((PASS + 1))
     else
         if [ "$actual" = "BLOCKED" ]; then
-            echo -e "   Actual:   ${RED}🚫 BLOCKED${RESET}  ${RED}✗ FAIL${RESET}"
+            echo -e "Actual: ${RED}BLOCKED${RESET} ${RED}FAIL${RESET}"
         else
-            echo -e "   Actual:   ${GREEN}✅ ALLOWED${RESET}  ${RED}✗ FAIL${RESET}"
+            echo -e "Actual: ${GREEN}ALLOWED${RESET} ${RED}FAIL${RESET}"
         fi
         FAIL=$((FAIL + 1))
     fi
@@ -115,32 +115,32 @@ summary() {
 banner
 wait_for_proxy
 
-# Test 1: ✅ ALLOWED — Legitimate read
-test_case 1 "✅" "ALLOWED — Legitimate read" \
+# Test 1: ALLOWED — Legitimate read
+test_case 1 """ALLOWED — Legitimate read"\
     "agent:cursor-ai:mission:summarize-feedback:token:cursor-secret-123" \
     "SELECT * FROM feedback LIMIT 5" \
     "ALLOWED"
 
-# Test 2: 🚫 BLOCKED — DROP TABLE attack
-test_case 2 "🚫" "BLOCKED — DROP TABLE attack" \
+# Test 2: BLOCKED — DROP TABLE attack
+test_case 2 "BLOCKED""BLOCKED — DROP TABLE attack"\
     "agent:cursor-ai:mission:summarize-feedback:token:cursor-secret-123" \
     "DROP TABLE users" \
     "BLOCKED"
 
-# Test 3: 🚫 BLOCKED — Rogue agent (not in policy)
-test_case 3 "🚫" "BLOCKED — Rogue agent" \
+# Test 3: BLOCKED — Rogue agent (not in policy)
+test_case 3 "BLOCKED""BLOCKED — Rogue agent"\
     "agent:rogue-bot:mission:steal-data" \
     "SELECT * FROM users" \
     "BLOCKED"
 
-# Test 4: 🚫 BLOCKED — Dangerous function
-test_case 4 "🚫" "BLOCKED — Dangerous function" \
+# Test 4: BLOCKED — Dangerous function
+test_case 4 "BLOCKED""BLOCKED — Dangerous function"\
     "agent:cursor-ai:mission:summarize-feedback:token:cursor-secret-123" \
     "SELECT pg_read_file('/etc/passwd')" \
     "BLOCKED"
 
-# Test 5: 🚫 BLOCKED — Auth token mismatch
-test_case 5 "🚫" "BLOCKED — Auth token mismatch" \
+# Test 5: BLOCKED — Auth token mismatch
+test_case 5 "BLOCKED""BLOCKED — Auth token mismatch"\
     "agent:cursor-ai:mission:summarize-feedback:token:wrong-token" \
     "SELECT 1" \
     "BLOCKED"

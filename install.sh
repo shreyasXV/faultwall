@@ -83,7 +83,7 @@ fi
 ASSET="faultwall-${VERSION}-${OS}-${ARCH}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 
-echo "🔒 FaultWall installer"
+echo "FaultWall installer"
 echo "    version: $VERSION"
 echo "    target:  $OS/$ARCH"
 echo "    url:     $URL"
@@ -102,12 +102,12 @@ if curl -fsSL "https://github.com/${REPO}/releases/download/${VERSION}/checksums
   if [[ -n "$EXPECTED" ]]; then
     ACTUAL=$(shasum -a 256 "$TMP/$ASSET" | awk '{print $1}')
     if [[ "$EXPECTED" != "$ACTUAL" ]]; then
-      echo "✗ Checksum mismatch!" >&2
+      echo "error Checksum mismatch!">&2
       echo "  expected: $EXPECTED" >&2
       echo "  got:      $ACTUAL" >&2
       exit 1
     fi
-    echo "  ✓ checksum verified"
+    echo "ok checksum verified"
   fi
 fi
 
@@ -117,13 +117,13 @@ tar -xzf "$TMP/$ASSET" -C "$TMP"
 # Find the extracted binary, excluding the tarball itself
 EXTRACTED=$(find "$TMP" -maxdepth 1 -name 'faultwall-*' -type f ! -name '*.tar.gz' ! -name '*.tgz' | head -1)
 if [[ -z "$EXTRACTED" ]]; then
-  echo "✗ Binary not found after extraction" >&2
+  echo "error Binary not found after extraction">&2
   exit 1
 fi
 
 # Verify it's actually an executable, not a misnamed archive
 if file "$EXTRACTED" | grep -qE 'gzip|compressed|archive'; then
-  echo "✗ Expected binary but got archive: $EXTRACTED" >&2
+  echo "error Expected binary but got archive: $EXTRACTED">&2
   echo "  file type: $(file -b "$EXTRACTED")" >&2
   exit 1
 fi
@@ -139,7 +139,7 @@ else
 fi
 
 echo
-echo "✅ Installed faultwall $VERSION → $INSTALL_DIR/$BIN_NAME"
+echo "Installed faultwall $VERSION → $INSTALL_DIR/$BIN_NAME"
 
 # ── Control-plane enrollment (optional, non-fatal) ──
 # If --token + --control-plane were supplied, register this installation and
@@ -190,9 +190,9 @@ EOF
   chmod 600 "$CONFIG_FILE" 2>/dev/null || true
 
   if [[ "$ENROLL_OK" -eq 1 ]]; then
-    echo "  ✓ enrolled (installation_id: ${INSTALL_ID:-unknown})"
+    echo "ok enrolled (installation_id: ${INSTALL_ID:-unknown})"
   else
-    echo "  ⚠️  enroll request failed — wrote config anyway; the proxy will retry phone-home on start." >&2
+    echo "WARN: enroll request failed — wrote config anyway; the proxy will retry phone-home on start.">&2
   fi
   echo "  → config: $CONFIG_FILE"
 fi

@@ -138,7 +138,7 @@ func PRBody(p Proposal, resp Response, runID string, diffText string) string {
 	fmt.Fprintf(&sb, "### Audit\n- Run ID: `%s`\n\n", runID)
 
 	sb.WriteString("---\n**This PR will not auto-merge.** Reviewer must explicitly approve before any policy change reaches the proxy.\n\n")
-	sb.WriteString("🤖 Generated with [FaultWall APA](https://github.com/shreyasXV/faultwall)\n")
+	sb.WriteString("Generated with [FaultWall APA](https://github.com/shreyasXV/faultwall)\n")
 	return sb.String()
 }
 

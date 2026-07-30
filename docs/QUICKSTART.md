@@ -81,7 +81,7 @@ psql "postgres://postgres:postgres@localhost:5433/postgres?application_name=agen
 FaultWall logs blocks to stderr and returns a standard Postgres error to the client:
 
 ```
-🛡️  [BLOCKED] agent=my-agent mission=default
+  [BLOCKED] agent=my-agent mission=default
     query: DROP TABLE users;
     reason: operation 'DROP' in blocked_operations
 ```

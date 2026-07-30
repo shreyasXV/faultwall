@@ -37,15 +37,15 @@ attack() {
     local verdict
     if [ "$expect_block" = "1" ]; then
         if [ $ec -ne 0 ] || echo "$output" | grep -qiE "policy|blocked|denied|faultwall"; then
-            verdict="✅ BLOCKED (correct)"; PASS_COUNT=$((PASS_COUNT+1))
+            verdict="BLOCKED (correct)"; PASS_COUNT=$((PASS_COUNT+1))
         else
-            verdict="🔴 BYPASSED — SECURITY FAILURE"; FAIL_COUNT=$((FAIL_COUNT+1))
+            verdict="BYPASSED — SECURITY FAILURE"; FAIL_COUNT=$((FAIL_COUNT+1))
         fi
     else
         if [ $ec -eq 0 ]; then
-            verdict="✅ ALLOWED (correct)"; PASS_COUNT=$((PASS_COUNT+1))
+            verdict="ALLOWED (correct)"; PASS_COUNT=$((PASS_COUNT+1))
         else
-            verdict="🟡 UNEXPECTED BLOCK"; FAIL_COUNT=$((FAIL_COUNT+1))
+            verdict="UNEXPECTED BLOCK"; FAIL_COUNT=$((FAIL_COUNT+1))
         fi
     fi
     echo "VERDICT: $verdict" >> $OUT

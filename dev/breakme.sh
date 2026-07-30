@@ -18,7 +18,7 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\03
 banner() {
   echo -e "${CYAN}${BOLD}"
   echo "╔════════════════════════════════════════════════════════════════╗"
-  echo "║                  🧱  FAULTWALL  BREAK-ME  🔨                   ║"
+  echo "║ FAULTWALL BREAK-ME ║"
   echo "║              Break My AI · Novita · SF · Apr 24                ║"
   echo "╚════════════════════════════════════════════════════════════════╝"
   echo -e "${NC}"
@@ -36,7 +36,7 @@ case "$cmd" in
   reset)
     echo -e "${CYAN}Resetting seed data...${NC}"
     docker compose exec -T postgres psql -U ghost -d faultwall_demo < dev/breakme-seed.sql
-    echo -e "${GREEN}✓ Reset complete. Fresh fake-PII DB.${NC}"
+    echo -e "${GREEN}ok Reset complete. Fresh fake-PII DB.${NC}"
     exit 0
     ;;
 
@@ -48,7 +48,7 @@ case "$cmd" in
     echo -e "${CYAN}[2/4]${NC} Waiting for Postgres to be healthy..."
     for i in {1..30}; do
       if docker compose exec -T postgres pg_isready -U ghost -d faultwall_demo >/dev/null 2>&1; then
-        echo -e "${GREEN}      ✓ Postgres ready${NC}"
+        echo -e "${GREEN} ok Postgres ready${NC}"
         break
       fi
       sleep 1
@@ -62,7 +62,7 @@ case "$cmd" in
 
     echo
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "${GREEN}${BOLD}   🎯  READY TO BE BROKEN  🎯${NC}"
+    echo -e "${GREEN}${BOLD} READY TO BE BROKEN ${NC}"
     echo -e "${GREEN}${BOLD}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo
     echo -e "${BOLD}Tester connection string (paste into any psql/tool):${NC}"

@@ -22,13 +22,13 @@
 
 | Deployment | Status |
 |---|---|
-| Self-hosted Postgres 12+ | 🟢 Green |
-| AWS RDS Postgres 16 | 🟢 Green |
-| AWS Aurora Postgres 16 | 🟢 Green |
-| Neon (serverless Postgres 17) | 🟢 Green |
-| PgBouncer (tx + session) | 🟢 Green |
-| Supabase pooler | 🟡 Yellow ([workaround](docs/compatibility.md#supabase-tested-with-real-instance-2026-04-27)) |
-| Cloud SQL · CrunchyBridge · DO MPG | 🟢 Expected ¹ |
+| Self-hosted Postgres 12+ | OK Green |
+| AWS RDS Postgres 16 | OK Green |
+| AWS Aurora Postgres 16 | OK Green |
+| Neon (serverless Postgres 17) | OK Green |
+| PgBouncer (tx + session) | OK Green |
+| Supabase pooler | WARN Yellow ([workaround](docs/compatibility.md#supabase-tested-with-real-instance-2026-04-27)) |
+| Cloud SQL · CrunchyBridge · DO MPG | OK Expected ¹ |
 
 ¹ Same Postgres wire protocol as validated providers; tested path exists, instance not provisioned.
 
@@ -42,18 +42,18 @@ A prompt injection hides a `DROP TABLE` in a customer feedback comment. Your age
 FaultWall intercepts the query **before it reaches PostgreSQL**, parses the SQL, checks it against your policy, and blocks it:
 
 ```
-🔌 New connection: agent=cursor-ai/summarize-feedback
-🟢 [ALLOWED] agent=cursor-ai/summarize-feedback  query=SELECT * FROM feedback LIMIT 100;
-🔴 [BLOCKED] agent=cursor-ai/summarize-feedback  reason=blocked_operation  query=DROP TABLE users;
-🔴 [BLOCKED] agent=rogue-bot/steal               reason=agent_not_in_policy  query=SELECT * FROM users;
-🔴 [BLOCKED] agent=cursor-ai/summarize-feedback  reason=blocked_function:pg_read_file  query=SELECT pg_read_file('/etc/passwd');
+ New connection: agent=cursor-ai/summarize-feedback
+OK [ALLOWED] agent=cursor-ai/summarize-feedback query=SELECT * FROM feedback LIMIT 100;
+FAIL [BLOCKED] agent=cursor-ai/summarize-feedback reason=blocked_operation query=DROP TABLE users;
+FAIL [BLOCKED] agent=rogue-bot/steal reason=agent_not_in_policy query=SELECT * FROM users;
+FAIL [BLOCKED] agent=cursor-ai/summarize-feedback reason=blocked_function:pg_read_file query=SELECT pg_read_file('/etc/passwd');
 ```
 
 ---
 
 ## Two Modes
 
-### 🛡️ Proxy Mode (Enforce) — **Recommended**
+### Proxy Mode (Enforce) — **Recommended**
 
 FaultWall sits between your agent and PostgreSQL as an inline L7 proxy. Every SQL query is parsed and checked **before it reaches the database**. Blocked queries never execute.
 
@@ -69,7 +69,7 @@ FaultWall sits between your agent and PostgreSQL as an inline L7 proxy. Every SQ
 
 Agents connect to port 5433 instead of 5432. That's the only change.
 
-### 📊 Monitor Mode (Sidecar)
+### Monitor Mode (Sidecar)
 
 FaultWall connects to your database as a read-only sidecar, polls `pg_stat_activity`, and logs violations. Good for visibility without being in the data path.
 
@@ -248,8 +248,8 @@ This is set in the connection string — no code changes beyond the connection c
 
 | Protocol | Coverage | Used By |
 |----------|----------|---------|
-| **Simple Query** (`Q` message) | ✅ Full inspection | `psql`, basic clients |
-| **Extended Query** (`Parse`/`Bind`/`Execute`) | ✅ Full inspection | psycopg2, pgx, SQLAlchemy, JDBC, all ORMs |
+| **Simple Query** (`Q`message) | Full inspection | `psql`, basic clients |
+| **Extended Query** (`Parse`/`Bind`/`Execute`) | Full inspection | psycopg2, pgx, SQLAlchemy, JDBC, all ORMs |
 
 ---
 
@@ -265,12 +265,12 @@ POLICY_ENFORCEMENT=monitor \
 ```
 
 **Features:**
-- 📊 Real-time dashboard on port 8080
-- 🔍 Anomaly detection (genetic algorithm-tuned baselines)
-- ⚡ Auto-throttling (kill runaway queries)
-- 💰 Cost attribution per tenant/agent
-- 🤖 MCP server for AI agent self-monitoring
-- 📨 Slack alerting
+- Real-time dashboard on port 8080
+- Anomaly detection (genetic algorithm-tuned baselines)
+- Auto-throttling (kill runaway queries)
+- Cost attribution per tenant/agent
+- MCP server for AI agent self-monitoring
+- Slack alerting
 
 **Limitation:** Monitor mode polls `pg_stat_activity` every 10 seconds. Queries that complete faster than 10 seconds may not be detected. Use Proxy Mode for guaranteed enforcement.
 
@@ -315,6 +315,26 @@ in the dashboard: Download the proposed YAML, apply it yourself, then
 - `GET /api/apa/proposals/files` — list proposals (diff + metadata)
 - `GET /api/apa/proposals/files/{id}/download` — download the proposed policies.yaml
 - `POST /api/apa/proposals/files/{id}/apply` | `/dismiss` — mark status
+
+#### What APA sends to the control plane
+
+A `FingerprintRule` in `policies.yaml` stores the observed query in its `sql:`
+field, so a raw APA diff contains real query text. If you enroll with the hosted
+control plane, FaultWall redacts every `sql:` value before upload and never
+uploads the full merged YAML. The hash, seen count, verdict, and reason all ship,
+so the dashboard still shows what is being promoted and why:
+
+```
++    allowed_fingerprints:
++      - hash: a1b2c3
++        sql: [redacted: query text stays on-host]
++        seen: 42
++        verdict: allow
+```
+
+Query text lives only in the local file-drop artifact (`~/.faultwall/proposals`)
+and the local dashboard. Self-hosted with no control-plane enrollment, nothing
+leaves your infrastructure at all.
 
 ---
 

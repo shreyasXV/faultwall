@@ -230,13 +230,13 @@ func InitBypassDetectionGuard() {
 	}
 	if !bypassClassifierSelfCheckFn() {
 		bypassDetectionOn.Store(false)
-		log.Printf("⚠️  REAL-F9 self-check FAILED: bypass classifier gave incorrect verdicts on " +
+		log.Printf("WARN: REAL-F9 self-check FAILED: bypass classifier gave incorrect verdicts on "+
 			"synthetic input. Detection disabled (gate OFF) so we don't emit bogus warnings. " +
 			"DB-port isolation remains a HARD REQUIREMENT regardless — verify externally.")
 		return
 	}
 	bypassDetectionOn.Store(true)
-	log.Printf("✅ REAL-F9 guard active: bypass detection runs on each pg_stat_activity poll. " +
+	log.Printf("REAL-F9 guard active: bypass detection runs on each pg_stat_activity poll. "+
 		"Observe-only — agents that connect direct-to-DB will be logged as suspected " +
 		"bypasses, not blocked. Disable with FW_BYPASS_DETECTION=false.")
 }
@@ -368,7 +368,7 @@ func (d *BypassDetector) tick() {
 	rows, err := d.source.Snapshot()
 	if err != nil {
 		// Per spec: a query error is non-fatal. Log a warning, continue.
-		log.Printf("⚠️  REAL-F9 bypass detector: pg_stat_activity snapshot failed: %v "+
+		log.Printf("WARN: REAL-F9 bypass detector: pg_stat_activity snapshot failed: %v "+
 			"(non-fatal; will retry on next tick)", err)
 		return
 	}
@@ -394,7 +394,7 @@ func (d *BypassDetector) classifyAndWarn(rows []SessionRow) {
 		}
 		d.mu.Unlock()
 		if !alreadyWarned {
-			log.Printf("🚨 REAL-F9 BYPASS SUSPECTED: agent-like session NOT originated by proxy. "+
+			log.Printf("ALERT: REAL-F9 BYPASS SUSPECTED: agent-like session NOT originated by proxy. "+
 				"pid=%d application_name=%q usename=%q client_addr=%q backend_type=%q. "+
 				"This session reaches the database WITHOUT FaultWall in front of it — the "+
 				"SQL-level enforcement promise is VOID for this session. Verify network "+

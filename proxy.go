@@ -84,9 +84,9 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
 		}
-		log.Printf("🔒 TLS enabled for client connections (cert: %s, key: %s)", tlsCert, tlsKey)
+		log.Printf("TLS enabled for client connections (cert: %s, key: %s)", tlsCert, tlsKey)
 	} else {
-		log.Printf("⚠️  TLS not configured — client connections will be plaintext")
+		log.Printf("WARN: TLS not configured — client connections will be plaintext")
 	}
 
 	// Build upstream TLS config if enabled
@@ -102,9 +102,9 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey
 			MinVersion:         tls.VersionTLS12,
 		}
 		if upstreamTLSSkipVerify {
-			log.Printf("🔒 Upstream TLS enabled (skip verify — NOT for production)")
+			log.Printf("Upstream TLS enabled (skip verify — NOT for production)")
 		} else {
-			log.Printf("🔒 Upstream TLS enabled (server: %s)", host)
+			log.Printf("Upstream TLS enabled (server: %s)", host)
 		}
 	}
 
@@ -112,7 +112,7 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey
 	if err != nil {
 		log.Fatalf("Proxy: failed to listen on %s: %v", listenAddr, err)
 	}
-	log.Printf("🛡️  FaultWall proxy listening on %s%s%s → upstream %s%s%s",
+	log.Printf("FaultWall proxy listening on %s%s%s → upstream %s%s%s",
 		colorCyan, listenAddr, colorReset, colorCyan, upstreamAddr, colorReset)
 	log.Printf("   Enforcement mode: %s%s%s", colorBold, pe.GetEnforcement(), colorReset)
 
@@ -188,7 +188,7 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		agentLabel = appName
 	}
 
-	log.Printf("🔌 New connection: %sagent=%s%s remote=%s", colorCyan, agentLabel, colorReset, client.RemoteAddr())
+	log.Printf("New connection: %sagent=%s%s remote=%s", colorCyan, agentLabel, colorReset, client.RemoteAddr())
 
 	// 2b. Validate auth token (before connecting to upstream)
 	if identity != nil {
@@ -1051,7 +1051,7 @@ func explainQWMFlag(pq *ParsedQuery, infra QWMInfraState, rec QWMFlagRecord, use
 			infra.ActiveBackends, infra.Utilization*100))
 	}
 	if infra.BlockedBackends > 0 {
-		parts = append(parts, fmt.Sprintf("⚠ %d backend(s) blocked waiting on locks — lock contention.", infra.BlockedBackends))
+		parts = append(parts, fmt.Sprintf("WARN: %d backend(s) blocked waiting on locks — lock contention.", infra.BlockedBackends))
 	}
 	if infra.LongestActiveMs >= 5000 {
 		parts = append(parts, fmt.Sprintf("Longest running query has been active %.1fs.", infra.LongestActiveMs/1000.0))

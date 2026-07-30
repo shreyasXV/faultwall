@@ -149,16 +149,16 @@ func main() {
 					cores := qwmConfiguredCores()
 					qwmStateSampler = NewStateSampler(mdb, cores, time.Second)
 					qwmStateSampler.Start()
-					log.Printf("⚡ QWM world model active (SLO %.0fms, %.0f core(s)) — live state sampling on", wmArtifact.SLOms, cores)
+					log.Printf("QWM world model active (SLO %.0fms, %.0f core(s)) — live state sampling on", wmArtifact.SLOms, cores)
 				} else {
 					mdb.Close()
-					log.Printf("⚡ QWM world model active (queuing prior only) — monitoring DB ping failed: %v", perr)
+					log.Printf("QWM world model active (queuing prior only) — monitoring DB ping failed: %v", perr)
 				}
 			} else {
-				log.Printf("⚡ QWM world model active (queuing prior only) — monitoring DB open failed: %v", err)
+				log.Printf("QWM world model active (queuing prior only) — monitoring DB open failed: %v", err)
 			}
 		} else {
-			log.Printf("⚡ QWM world model active (queuing prior only) — no monitoring DSN")
+			log.Printf("QWM world model active (queuing prior only) — no monitoring DSN")
 		}
 		go func() {
 			ticker := time.NewTicker(60 * time.Second)
@@ -169,7 +169,7 @@ func main() {
 				}
 			}
 		}()
-		log.Printf("🛡️  FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
+		log.Printf("FaultWall L7 proxy mode (policies: %s)", proxyPolicies)
 
 		// Optional control-plane telemetry (metadata only). Enabled when
 		// ~/.faultwall/config.toml has a [control_plane] url+token (written by
@@ -178,7 +178,7 @@ func main() {
 		if cpCfg, ok := loadControlPlaneConfig(); ok {
 			telemetryClient = NewTelemetryClient(cpCfg)
 			telemetryClient.StartHeartbeat(60 * time.Second)
-			log.Printf("📡 Control-plane telemetry enabled → %s (metadata only)", cpCfg.URL)
+			log.Printf("Control-plane telemetry enabled → %s (metadata only)", cpCfg.URL)
 		}
 
 		// Self-disabling feature guards (see guards.go). Each guard runs a
@@ -209,16 +209,16 @@ func main() {
 						}
 						bd := NewBypassDetector(proxyBackendRegistry, NewDBBypassRowSource(mdb), interval)
 						bd.Start()
-						log.Printf("🔍 REAL-F9 bypass detector running every %s (observe-only)", interval)
+						log.Printf("REAL-F9 bypass detector running every %s (observe-only)", interval)
 					} else {
 						mdb.Close()
-						log.Printf("⚠️  REAL-F9 bypass detector: monitoring DB ping failed: %v — detection skipped", perr)
+						log.Printf("WARN: REAL-F9 bypass detector: monitoring DB ping failed: %v — detection skipped", perr)
 					}
 				} else {
-					log.Printf("⚠️  REAL-F9 bypass detector: monitoring DB open failed: %v — detection skipped", err)
+					log.Printf("WARN: REAL-F9 bypass detector: monitoring DB open failed: %v — detection skipped", err)
 				}
 			} else {
-				log.Printf("⚠️  REAL-F9 bypass detector: no monitoring DSN — detection skipped")
+				log.Printf("WARN: REAL-F9 bypass detector: no monitoring DSN — detection skipped")
 			}
 		}
 
@@ -339,14 +339,14 @@ func main() {
 	if err := db.Ping(); err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
-	log.Println("✅ Connected to PostgreSQL")
+	log.Println("Connected to PostgreSQL")
 
 	// Check pg_stat_statements
 	var extExists bool
 	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_statements')`).Scan(&extExists)
 	if err != nil || !extExists {
 		fmt.Println(`
-⚠️  pg_stat_statements extension is NOT enabled.
+WARN: pg_stat_statements extension is NOT enabled.
 
 To enable it, run as a superuser:
   CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
@@ -356,7 +356,7 @@ And add to postgresql.conf:
 
 Then restart PostgreSQL. FaultWall will run in degraded mode without query-level metrics.`)
 	} else {
-		log.Println("✅ pg_stat_statements extension detected")
+		log.Println("pg_stat_statements extension detected")
 	}
 
 	// Initialize subsystems
@@ -369,16 +369,16 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	predictor = NewPredictor()
 
 	if slackWebhookURL != "" {
-		log.Println("✅ Slack notifications enabled")
+		log.Println("Slack notifications enabled")
 	}
 	if alertWebhookURL != "" {
-		log.Printf("✅ Alert webhook configured: %s", alertWebhookURL)
+		log.Printf("Alert webhook configured: %s", alertWebhookURL)
 	}
-	log.Printf("✅ History store initialized (retention: %s)", os.Getenv("HISTORY_RETENTION"))
-	log.Printf("✅ Throttler initialized (enabled: %v)", throttler.GetConfig().Enabled)
-	log.Printf("✅ Cost estimator initialized (RDS hourly: $%.2f)", costEstimator.rdsHourlyCost)
-	log.Printf("✅ Anomaly detector initialized (window: %d, sensitivity: %.1f)", anomalyDetector.windowSize, anomalyDetector.sensitivity)
-	log.Printf("✅ Predictor initialized (threshold: %.0fms)", predictor.thresholdMs)
+	log.Printf("History store initialized (retention: %s)", os.Getenv("HISTORY_RETENTION"))
+	log.Printf("Throttler initialized (enabled: %v)", throttler.GetConfig().Enabled)
+	log.Printf("Cost estimator initialized (RDS hourly: $%.2f)", costEstimator.rdsHourlyCost)
+	log.Printf("Anomaly detector initialized (window: %d, sensitivity: %.1f)", anomalyDetector.windowSize, anomalyDetector.sensitivity)
+	log.Printf("Predictor initialized (threshold: %.0fms)", predictor.thresholdMs)
 
 	agentTracker = NewAgentTracker()
 	policyEngine = NewPolicyEngine()
@@ -389,11 +389,11 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 
 	// Run initial detection
 	if err := detector.Detect(); err != nil {
-		log.Printf("⚠️  Tenant detection warning: %v", err)
+		log.Printf("WARN: Tenant detection warning: %v", err)
 	} else {
-		log.Printf("🔍 Detected isolation pattern: %s", detector.Pattern)
+		log.Printf("Detected isolation pattern: %s", detector.Pattern)
 		if len(detector.Tenants) > 0 {
-			log.Printf("👥 Found %d tenants", len(detector.Tenants))
+			log.Printf("Found %d tenants", len(detector.Tenants))
 		}
 	}
 
@@ -429,7 +429,7 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 			} else {
 				conns := agentTracker.GetConnections()
 				if len(conns) > 0 {
-					log.Printf("🔍 Agent poll: found %d agent connections", len(conns))
+					log.Printf("Agent poll: found %d agent connections", len(conns))
 					for _, conn := range conns {
 						log.Printf("  → pid=%d agent=%s state=%s query=%s", conn.PID, conn.ApplicationName, conn.State, conn.Query)
 						policyEngine.EnforceOnConnection(db, conn)

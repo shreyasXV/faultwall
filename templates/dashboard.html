@@ -1886,10 +1886,10 @@ async function refresh() {
     const upHr  = Math.floor(upMin/60);
     const poUp = document.getElementById('po-uptime');
     if (poUp) poUp.textContent = upHr>0?upHr+'h '+upMin%60+'m':upMin>0?upMin+'m '+upSec%60+'s':upSec+'s';
-    if (label) label.textContent = '✓ live';
+    if (label) label.textContent = 'ok live';
   } catch(e) {
     setStatus(false, 'error: '+e.message);
-    if (label) label.textContent = '✗ error';
+    if (label) label.textContent = 'error error';
     console.error(e);
   }
 
