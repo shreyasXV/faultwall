@@ -316,6 +316,26 @@ in the dashboard: Download the proposed YAML, apply it yourself, then
 - `GET /api/apa/proposals/files/{id}/download` — download the proposed policies.yaml
 - `POST /api/apa/proposals/files/{id}/apply` | `/dismiss` — mark status
 
+#### What APA sends to the control plane
+
+A `FingerprintRule` in `policies.yaml` stores the observed query in its `sql:`
+field, so a raw APA diff contains real query text. If you enroll with the hosted
+control plane, FaultWall redacts every `sql:` value before upload and never
+uploads the full merged YAML. The hash, seen count, verdict, and reason all ship,
+so the dashboard still shows what is being promoted and why:
+
+```
++    allowed_fingerprints:
++      - hash: a1b2c3
++        sql: [redacted: query text stays on-host]
++        seen: 42
++        verdict: allow
+```
+
+Query text lives only in the local file-drop artifact (`~/.faultwall/proposals`)
+and the local dashboard. Self-hosted with no control-plane enrollment, nothing
+leaves your infrastructure at all.
+
 ---
 
 ## Docker Compose
