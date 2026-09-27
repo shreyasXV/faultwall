@@ -810,6 +810,22 @@ func (pe *PolicyEngine) checkQueryImpl(identity *AgentIdentity, parsed *ParsedQu
 				}
 			}
 
+			// Legacy: default-deny DCL (SET ROLE, SET SESSION AUTHORIZATION, GRANT,
+			// REVOKE, role DDL) when no profile is set. A blocked_operations list
+			// that forgets SET_ROLE must not let an agent switch identity (F6).
+			if OperationCategory[strings.ToUpper(op)] == "DCL" {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "blocked_operation",
+					Operation: op,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
+				}
+			}
+
 			// Legacy: default-deny for UNKNOWN when no profile is set
 			if strings.EqualFold(op, "UNKNOWN") {
 				return &PolicyViolation{
