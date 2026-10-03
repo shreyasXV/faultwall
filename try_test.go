@@ -1,8 +1,14 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func flagsFor(q string) []string { return tryStaticFlags(ParseQuery(q), q) }
@@ -212,5 +218,52 @@ func TestTryUnnamedAgentIsMarked(t *testing.T) {
 		if want := a.Agent == "unknown"; a.Unnamed != want {
 			t.Errorf("agent %q unnamed=%v want %v", a.Agent, a.Unnamed, want)
 		}
+	}
+}
+
+// TestTryTelemetryOnlyWhenEnrolled: `faultwall try` sends activity to the
+// control plane only with the same enroll config --proxy uses, and nothing
+// at all without it.
+func TestTryTelemetryOnlyWhenEnrolled(t *testing.T) {
+	defer func() { telemetryClient = nil }()
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	// Not enrolled: no env, no config file.
+	t.Setenv("FAULTWALL_CONTROL_PLANE_URL", "")
+	t.Setenv("FAULTWALL_CONTROL_PLANE_TOKEN", "")
+	t.Setenv("FAULTWALL_CONFIG_FILE", filepath.Join(t.TempDir(), "missing.toml"))
+	telemetryClient = nil
+	if tc := startTryTelemetry(); tc != nil || telemetryClient != nil {
+		t.Fatal("try without control-plane config must not start telemetry")
+	}
+	if c := newTelemetryConn(nil, "psql"); c != nil {
+		t.Fatal("telemetry conn must be nil (no-op) when not enrolled")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("not enrolled: %d requests sent", n)
+	}
+
+	// Enrolled via the same [control_plane] config --proxy reads (what
+	// install.sh writes): events reach the control plane.
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("[control_plane]\nurl = \""+srv.URL+"\"\ntoken = \"tok\"\ntelemetry_enabled = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAULTWALL_CONFIG_FILE", cfgPath)
+	tc := startTryTelemetry()
+	if tc == nil || telemetryClient != tc {
+		t.Fatal("enrolled try must start the telemetry client")
+	}
+	c := newTelemetryConn(&AgentIdentity{AgentID: "support-bot"}, "")
+	c.emitNow("blocked", "block", nil, ParseQuery("DROP TABLE x"), "DROP TABLE x", 0.1)
+	tc.Close()
+	if n := atomic.LoadInt32(&hits); n < 1 {
+		t.Fatal("enrolled try sent nothing")
 	}
 }

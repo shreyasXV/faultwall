@@ -620,6 +620,18 @@ func tryMux(info *tryInfo) *http.ServeMux {
 	return mux
 }
 
+// startTryTelemetry reuses the --proxy telemetry client when the box is
+// enrolled to a control plane; nil (no-op) otherwise.
+func startTryTelemetry() *TelemetryClient {
+	cfg, ok := loadControlPlaneConfig()
+	if !ok {
+		return nil
+	}
+	telemetryClient = NewTelemetryClient(cfg)
+	telemetryClient.StartHeartbeat(60 * time.Second)
+	return telemetryClient
+}
+
 func runTry(args []string) error {
 	opts, err := parseTryArgs(args, os.Getenv)
 	if errors.Is(err, errTryHelp) {
@@ -684,6 +696,12 @@ func runTry(args []string) error {
 	policyEngine = tryPolicyEngine()
 	agentTracker = NewAgentTracker()
 	tryActivity = NewTryActivityStore(1000)
+	// Same enroll config as --proxy (FAULTWALL_CONTROL_PLANE_URL/_TOKEN env or
+	// [control_plane] in ~/.faultwall/config.toml). Not enrolled: nothing is sent.
+	if tc := startTryTelemetry(); tc != nil {
+		defer tc.Close()
+		fmt.Printf("  ✓ also sending activity metadata to %s (no raw query text or values)\n", tc.cfg.URL)
+	}
 	tryActivity.onFlag = func(ev *TryEvent, flags []string) {
 		reasons := make([]string, 0, len(flags))
 		for _, f := range flags {
