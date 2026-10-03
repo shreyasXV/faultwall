@@ -299,7 +299,10 @@ func md5Hex(s string) string {
 // SCRAM-SHA-256), then relays AuthenticationOk + ParameterStatus +
 // BackendKeyData + ReadyForQuery to the client. Returns the backend PID.
 // An upstream ErrorResponse is forwarded to the client verbatim.
-func upstreamLogin(client, upstream net.Conn, creds upstreamCreds) (int, error) {
+// forwardReady=false holds back the final ReadyForQuery so the caller can run
+// session setup (SET SESSION ROLE) before the client may send queries; the
+// caller then sends ReadyForQuery itself.
+func upstreamLogin(client, upstream net.Conn, creds upstreamCreds, forwardReady bool) (int, error) {
 	var sc *scram.Client
 	pid := 0
 	authed := false
@@ -378,6 +381,9 @@ func upstreamLogin(client, upstream net.Conn, creds upstreamCreds) (int, error) 
 			continue
 		}
 		// Post-auth: relay to client until ReadyForQuery.
+		if t == 'Z' && !forwardReady {
+			return pid, nil
+		}
 		if err := writeWireMessage(client, t, payload); err != nil {
 			return pid, err
 		}

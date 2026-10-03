@@ -16,8 +16,8 @@ func TestKillRevokedEndsOnlyRevokedAgents(t *testing.T) {
 	})
 	r := &agentSessionRegistry{byID: map[uint64]agentSession{}}
 	killed := map[string]string{}
-	r.Register("a", func(m string) { killed["a"] = m })
-	r.Register("b", func(m string) { killed["b"] = m })
+	r.Register("a", "", func(m string) { killed["a"] = m })
+	r.Register("b", "", func(m string) { killed["b"] = m })
 	if n := r.KillRevoked(ks); n != 0 {
 		t.Fatalf("nothing revoked yet, killed %d", n)
 	}

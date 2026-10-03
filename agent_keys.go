@@ -51,6 +51,9 @@ type AgentKeyEntry struct {
 	// SCRAM-SHA-256 verifier of the key (nil for keys created before SCRAM
 	// support; those need FW_ALLOW_CLEARTEXT_KEY=*** for key-as-password).
 	Scram *ScramVerifier `json:"scram,omitempty"`
+	// DBRole: Postgres role key-authenticated sessions of this agent are
+	// switched to (SET SESSION ROLE) and pinned to. "" = no switch.
+	DBRole string `json:"db_role,omitempty"`
 }
 
 // ManagedRule mirrors the control plane's approvals rule shape.
@@ -195,6 +198,21 @@ func (s *AgentKeyStore) agentState(agent string) (live int, any bool) {
 	return
 }
 
+// DBRole returns the db_role of agent's live key(s) ("" = none). Live agent
+// names are unique on the control plane, so live keys agree; if they ever
+// don't, the lexically smallest non-empty role wins (deterministic).
+func (s *AgentKeyStore) DBRole(agent string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	role := ""
+	for _, e := range s.byHash {
+		if e.Agent == agent && !e.Revoked && e.DBRole != "" && (role == "" || e.DBRole < role) {
+			role = e.DBRole
+		}
+	}
+	return role
+}
+
 // HasAgent reports whether any key (live or revoked) was issued to name.
 func (s *AgentKeyStore) HasAgent(name string) bool {
 	s.mu.RLock()
@@ -314,7 +332,7 @@ func (ps *PolicySyncer) apply(r *policySyncResponse) (bool, error) {
 	}
 	ps.keys.Replace(r.AgentKeys)
 	if n := agentSessions.KillRevoked(ps.keys); n > 0 {
-		log.Printf("🔑 Ended %d open session(s) of agents whose key was revoked", n)
+		log.Printf("🔑 Ended %d open session(s) of agents whose key was revoked or whose DB role changed", n)
 	}
 	if ps.pe != nil {
 		ps.pe.SetManaged(m)

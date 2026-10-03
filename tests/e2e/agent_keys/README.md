@@ -20,3 +20,9 @@ The shared :5544 cluster uses `trust` in pg_hba, which would make the auth check
     bash scram_pg.sh stop
 
 The control-plane DB stays on :5544. A control check asserts the real role password works directly, so the "agent key rejected by Postgres" checks are real password checks.
+
+## db_role E2E (dbrole_e2e.sh)
+
+Same scratch scram-sha-256 cluster (`bash scram_pg.sh start`). Creates a SELECT-only role, grants it to the proxy's login, and creates three agents: `ro-agent` (db_role set, FaultWall writes=allow on purpose so Postgres is what stops the write), `rw-agent` (no db_role), and `bad-role-agent` (db_role not granted to the proxy login). Checks that Postgres itself rejects ro-agent's UPDATE/INSERT with 42501, that SELECT works, that FaultWall refuses SET ROLE / RESET ROLE / SET SESSION AUTHORIZATION / DISCARD ALL / RESET ALL / set_config('role') over simple and extended protocol without dropping the connection, that rw-agent still writes, that an ungranted role is a clear FATAL, and that clearing the role ends the open pinned session. `dbrole-last-run.txt` is the 26/26 run.
+
+Both scripts run the proxy's API on 127.0.0.1:18092 (`FW_E2E_API_PORT`) so they don't collide with anything already on :8080.

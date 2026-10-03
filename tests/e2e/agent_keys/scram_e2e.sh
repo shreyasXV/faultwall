@@ -49,7 +49,7 @@ POLICY=$(curl -s -H "Authorization: Bearer $TOK" http://127.0.0.1:18091/v1/polic
 
 printf 'default_policy: allow\nagents: {}\n' > $W/policies.yaml
 HOME=$W/home FAULTWALL_CONTROL_PLANE_URL=http://127.0.0.1:18091 FAULTWALL_CONTROL_PLANE_TOKEN=$TOK FW_POLICY_SYNC_INTERVAL=2s \
-  FW_UPSTREAM_USER=$ROLE FW_UPSTREAM_PASSWORD=$ROLEPW \
+  FW_UPSTREAM_USER=$ROLE FW_UPSTREAM_PASSWORD=$ROLEPW PORT=${FW_E2E_API_PORT:-18092} BIND_ADDR=127.0.0.1 \
   $W/faultwall --proxy --listen 127.0.0.1:15433 --upstream 127.0.0.1:$UPPORT --policies $W/policies.yaml --mode monitor > $W/proxy.log 2>&1 & echo $! > $W/px.pid
 for i in $(seq 1 40); do grep -q "agent" $W/proxy.log 2>/dev/null && nc -z 127.0.0.1 15433 && break; sleep 0.25; done
 sleep 3
