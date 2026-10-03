@@ -1,0 +1,13 @@
+default_policy: allow
+unidentified:
+  policy: allow
+agents:
+  support-agent:
+    description: e2e
+approvals:
+  timeout: 8s
+  rules:
+    - name: writes-to-orders
+      action: hold
+      operations: [UPDATE, DELETE]
+      tables: [orders]
