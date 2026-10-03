@@ -174,9 +174,31 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		}
 	}
 
-	// 2. Extract application_name from startup parameters
+	// 2. Resolve identity. Per-agent keys (agent_auth.go) first: a key as the
+	// PG password or as the application_name token. Otherwise the legacy
+	// application_name identity is used unchanged.
 	appName := extractAppName(startupBuf)
-	identity := ParseAgentIdentity(appName)
+	auth := startupAgentAuth(startupBuf, agentKeys)
+	if auth.Err != "" {
+		log.Printf("%s%s[REFUSED]%s %s remote=%s", colorRed, colorBold, colorReset, auth.Err, client.RemoteAddr())
+		sendStartupError(client, auth.Err)
+		return
+	}
+	identity := auth.Identity
+	startupBuf = auth.Startup
+	keyAuthed := auth.Mode != authPassthrough
+	if auth.Mode == authKeyPassword {
+		pw, perr := requestClientPassword(client)
+		if perr != nil {
+			log.Printf("Proxy: agent key auth for %s: %v", auth.ClaimedUser, perr)
+			return
+		}
+		if msg := verifyAgentPassword(auth.ClaimedUser, pw, agentKeys); msg != "" {
+			log.Printf("%s%s[REFUSED]%s %s remote=%s", colorRed, colorBold, colorReset, msg, client.RemoteAddr())
+			sendStartupError(client, msg)
+			return
+		}
+	}
 
 	agentLabel := "unknown"
 	if identity != nil {
@@ -197,7 +219,10 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 			ap, ok := cfg.Agents[identity.AgentID]
 			agentHasToken := ok && ap.AuthToken != ""
 			tokensMatch := agentHasToken && identity.Token == ap.AuthToken
-			if agentHasToken {
+			if keyAuthed {
+				// Already verified against a control-plane agent key.
+				agentHasToken, tokensMatch = true, true
+			} else if agentHasToken {
 				if identity.Token == "" || !tokensMatch {
 					log.Printf("%s%s[BLOCKED]%s auth token mismatch for agent=%s",
 						colorRed, colorBold, colorReset, agentLabel)
@@ -226,7 +251,23 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	}
 	defer upstream.Close()
 
-	// 4. Forward startup message to upstream
+	// 4. Forward startup message to upstream. Key-as-password agents log in
+	// upstream with the proxy's own DB credentials, labeled as the agent.
+	var creds upstreamCreds
+	if auth.Mode == authKeyPassword {
+		var ok bool
+		creds, ok = resolveUpstreamCreds()
+		if !ok {
+			msg := keyErr("this proxy has no database login for key-authenticated agents. Set FW_UPSTREAM_USER and FW_UPSTREAM_PASSWORD (or DATABASE_URL) on the FaultWall container.")
+			log.Printf("%s%s[REFUSED]%s %s", colorRed, colorBold, colorReset, msg)
+			sendStartupError(client, msg)
+			return
+		}
+		proto, params := parseStartupParams(startupBuf)
+		params = startupSet(params, "user", creds.User)
+		params = startupSet(params, "application_name", identity.Raw)
+		startupBuf = buildStartupMessage(proto, params)
+	}
 	if _, err := upstream.Write(startupBuf); err != nil {
 		log.Printf("Proxy: failed to forward startup to upstream: %v", err)
 		return
@@ -235,7 +276,12 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	// 5. Relay auth handshake until ReadyForQuery ('Z'). Capture the
 	// upstream backend PID (from BackendKeyData) so REAL-F9 can tell
 	// proxy-originated sessions from direct-to-DB bypasses.
-	upstreamPID, err := relayAuth(client, upstream)
+	var upstreamPID int
+	if auth.Mode == authKeyPassword {
+		upstreamPID, err = upstreamLogin(client, upstream, creds)
+	} else {
+		upstreamPID, err = relayAuth(client, upstream)
+	}
 	if err != nil {
 		log.Printf("Proxy: auth relay failed for agent=%s: %v", agentLabel, err)
 		return
@@ -547,7 +593,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			}
 			tryConn.onSimpleQuery(agentLabel, identity, query, pq, violation)
 
-			if violation != nil && pe.GetEnforcement() == "enforce" {
+			if violation != nil && pe.GetEnforcement() == "enforce" && !violation.FlagOnly {
 				violation.Action = "blocked"
 				pe.addViolation(*violation)
 				clientWriteMu.Lock()
@@ -600,7 +646,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				}
 				tryConn.onParse(stmtName, query, pq, violation)
 
-				if violation != nil && pe.GetEnforcement() == "enforce" {
+				if violation != nil && pe.GetEnforcement() == "enforce" && !violation.FlagOnly {
 					violation.Action = "blocked"
 					pe.addViolation(*violation)
 
@@ -906,6 +952,10 @@ func safeCheckQueryWithContext(pe *PolicyEngine, identity *AgentIdentity, query 
 		}
 	}()
 	violation = pe.CheckQueryWithContext(identity, parsed, query, 0, ctx)
+	if violation == nil {
+		// Managed "ask first" rules on a proxy that can't pause: flag only.
+		violation = pe.checkFlagRules(identity, parsed, query)
+	}
 	return
 }
 
