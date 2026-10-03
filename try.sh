@@ -80,6 +80,11 @@ fi
 
 [[ "${FAULTWALL_NO_RUN:-0}" == "1" ]] && { say "Installed. Run: $BIN try"; exit 0; }
 
+# Releases before `try` existed fall through to legacy monitor mode — fail clearly.
+if ! "$BIN" help 2>/dev/null | grep -q '^  try '; then
+  die "FaultWall ${VERSION} predates 'faultwall try' — set FAULTWALL_VERSION to a newer release"
+fi
+
 # Re-attach stdin to the terminal so Ctrl+C works when piped from curl.
 if [[ ! -t 0 ]] && { true </dev/tty; } 2>/dev/null; then
   exec "$BIN" try "$@" </dev/tty
