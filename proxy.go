@@ -515,6 +515,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 	// Track blocked Parse statements by name so we can block their Execute too
 	blockedStmts := make(map[string]bool)
+	// Track allowed prepared statements so repeat Executes (cached prepared
+	// statements: psycopg3, pgx, JDBC) are logged and counted every run.
+	stmts := newStmtTracker()
 
 	for {
 		msgType, payload, err := readWireMessage(client)
@@ -603,6 +606,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 					// Track this statement name as blocked
 					blockedStmts[stmtName] = true
+					stmts.close('S', stmtName)
 
 					// Don't forward Parse — drain remaining messages until Sync,
 					// then send ErrorResponse + ReadyForQuery
@@ -629,6 +633,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					emitTelemetryFor("allowed", "allow", nil, pq, decisionLatencyMs)
 				}
 				recordObservation(agentLabel, identity, query, pq, false)
+				stmts.parse(stmtName, query, pq, violation)
 			}
 		}
 
@@ -645,6 +650,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				clientWriteMu.Unlock()
 				continue
 			}
+			stmts.bind(portalName, stmtName)
 		}
 
 		// Extended query protocol: type 'E' (Execute)
@@ -659,6 +665,13 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				continue
 			}
 			tryConn.onExecute(agentLabel, identity, portalName)
+			if st, repeat := stmts.execute(portalName); repeat {
+				accountRepeatExecute(pe, st, agentLabel, identity)
+				if st.violation == nil && st.pq != nil {
+					inFlightFingerprint = st.pq.Fingerprint
+					inFlightUnderLoad = currentUtilization()
+				}
+			}
 		}
 
 		// Forward message to upstream (all non-blocked messages)
@@ -698,6 +711,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			closeType := payload[0]
 			name := extractNullTerminated(payload, 1)
 			tryConn.onClose(closeType, name)
+			stmts.close(closeType, name)
 			if closeType == 'S' {
 				delete(blockedStmts, name)
 			} else if closeType == 'P' {

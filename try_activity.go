@@ -365,10 +365,11 @@ func tryRecordCommandComplete(id int64, payload []byte) {
 // prepared statements (pgx, psycopg3, JDBC) are recorded on every Execute,
 // not just on the first Parse.
 type tryConnState struct {
-	mu      sync.Mutex
-	stmts   map[string]tryStmt
-	portals map[string]string
-	lastID  int64
+	mu       sync.Mutex
+	stmts    map[string]tryStmt
+	portals  map[string]string
+	executed map[string]bool // portal already ran (resumed Execute = same run)
+	lastID   int64
 }
 
 type tryStmt struct {
@@ -381,7 +382,7 @@ func newTryConnState() *tryConnState {
 	if tryActivity == nil {
 		return nil
 	}
-	return &tryConnState{stmts: map[string]tryStmt{}, portals: map[string]string{}}
+	return &tryConnState{stmts: map[string]tryStmt{}, portals: map[string]string{}, executed: map[string]bool{}}
 }
 
 func (c *tryConnState) setLast(id int64) {
@@ -419,6 +420,7 @@ func (c *tryConnState) onBind(portal, stmtName string) {
 	}
 	c.mu.Lock()
 	c.portals[portal] = stmtName
+	delete(c.executed, portal)
 	c.mu.Unlock()
 }
 
@@ -428,8 +430,10 @@ func (c *tryConnState) onExecute(agentLabel string, identity *AgentIdentity, por
 	}
 	c.mu.Lock()
 	st, ok := c.stmts[c.portals[portal]]
+	resumed := c.executed[portal]
+	c.executed[portal] = true
 	c.mu.Unlock()
-	if !ok || st.query == "" {
+	if !ok || st.query == "" || resumed {
 		return
 	}
 	c.setLast(tryRecordQuery(agentLabel, identity, st.query, st.pq, st.v))
@@ -444,6 +448,7 @@ func (c *tryConnState) onClose(kind byte, name string) {
 		delete(c.stmts, name)
 	} else if kind == 'P' {
 		delete(c.portals, name)
+		delete(c.executed, name)
 	}
 	c.mu.Unlock()
 }
