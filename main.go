@@ -204,7 +204,11 @@ func main() {
 		if cpCfg, ok := loadControlPlaneConfig(); ok {
 			telemetryClient = NewTelemetryClient(cpCfg)
 			telemetryClient.StartHeartbeat(60 * time.Second)
-			log.Printf("📡 Control-plane telemetry enabled → %s (metadata only)", cpCfg.URL)
+			shape := "off (FW_TELEMETRY_QUERY_SHAPE=off): op, table, rows, agent only"
+			if cpCfg.QueryShape {
+				shape = "on: literal-free shapes like `UPDATE orders SET status = ? WHERE id = ?` (disable: FW_TELEMETRY_QUERY_SHAPE=off)"
+			}
+			log.Printf("📡 Control-plane telemetry enabled → %s (metadata only; raw query text and values never leave this box). Query shapes %s", cpCfg.URL, shape)
 		}
 
 		// Self-disabling feature guards (see guards.go). Each guard runs a

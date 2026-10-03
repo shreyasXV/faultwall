@@ -434,6 +434,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 	// `faultwall try` live activity feed (nil / no-op outside try mode).
 	tryConn := newTryConnState()
+	// Control-plane telemetry (nil / no-op unless enrolled).
+	telConn := newTelemetryConn(identity, agentLabel)
+	defer telConn.flush()
 
 	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
@@ -469,6 +472,15 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			// CommandComplete ('C'): affected-row count for the try feed
 			if msgType == 'C' {
 				tryConn.onCommandComplete(payload)
+				telConn.onCommandComplete(payload)
+			}
+			switch msgType {
+			case 'I': // EmptyQueryResponse
+				telConn.onCommandComplete(nil)
+			case 'E': // ErrorResponse: oldest pending statement failed
+				telConn.onError()
+			case 'Z':
+				telConn.onReady()
 			}
 
 			// Check query timeout
@@ -556,16 +568,20 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				logBlocked(agentLabel, query, violation)
 				scoreQueryShadow(agentLabel, query, pq)
 				recordObservation(agentLabel, identity, query, pq, true)
-				emitTelemetryFor("blocked", "block", violation, pq, decisionLatencyMs)
+				telConn.emitNow("blocked", "block", violation, pq, query, decisionLatencyMs)
 				continue
 			}
 
+			nStmts := 1
+			if pq != nil && len(pq.Operations) > 1 {
+				nStmts = len(pq.Operations)
+			}
 			if violation != nil {
 				violation.Action = "monitored"
 				pe.addViolation(*violation)
 				logMonitored(agentLabel, query, violation)
 				scoreQueryShadow(agentLabel, query, pq)
-				emitTelemetryFor("monitored", "flag", violation, pq, decisionLatencyMs)
+				telConn.enqueue("monitored", "flag", violation, pq, query, decisionLatencyMs, nStmts)
 			} else {
 				logAllowed(agentLabel, query)
 				scoreQueryShadow(agentLabel, query, pq)
@@ -575,7 +591,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					inFlightFingerprint = pq.Fingerprint
 					inFlightUnderLoad = currentUtilization()
 				}
-				emitTelemetryFor("allowed", "allow", nil, pq, decisionLatencyMs)
+				telConn.enqueue("allowed", "allow", nil, pq, query, decisionLatencyMs, nStmts)
 			}
 			recordObservation(agentLabel, identity, query, pq, false)
 		}
@@ -617,23 +633,23 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					logBlocked(agentLabel, query, violation)
 					scoreQueryShadow(agentLabel, query, pq)
 					recordObservation(agentLabel, identity, query, pq, true)
-					emitTelemetryFor("blocked", "block", violation, pq, decisionLatencyMs)
+					telConn.emitNow("blocked", "block", violation, pq, query, decisionLatencyMs)
 					continue
 				}
 
+				// Telemetry for extended protocol is queued per Execute (below)
+				// so each run carries its CommandComplete row count.
 				if violation != nil {
 					violation.Action = "monitored"
 					pe.addViolation(*violation)
 					logMonitored(agentLabel, query, violation)
 					scoreQueryShadow(agentLabel, query, pq)
-					emitTelemetryFor("monitored", "flag", violation, pq, decisionLatencyMs)
 				} else {
 					logAllowed(agentLabel, query)
 					scoreQueryShadow(agentLabel, query, pq)
-					emitTelemetryFor("allowed", "allow", nil, pq, decisionLatencyMs)
 				}
 				recordObservation(agentLabel, identity, query, pq, false)
-				stmts.parse(stmtName, query, pq, violation)
+				stmts.parseTimed(stmtName, query, pq, violation, decisionLatencyMs)
 			}
 		}
 
@@ -665,7 +681,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				continue
 			}
 			tryConn.onExecute(agentLabel, identity, portalName)
-			if st, repeat := stmts.execute(portalName); repeat {
+			st, repeat, newRun := stmts.executeRun(portalName)
+			if newRun {
+				telConn.enqueueStmt(st)
+			}
+			if repeat {
 				accountRepeatExecute(pe, st, agentLabel, identity)
 				if st.violation == nil && st.pq != nil {
 					inFlightFingerprint = st.pq.Fingerprint
@@ -678,6 +698,10 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		if err := writeWireMessage(upstream, msgType, payload); err != nil {
 			log.Printf("Proxy: upstream write error: %v", err)
 			return
+		}
+
+		if msgType == 'Q' || msgType == 'S' {
+			telConn.onSyncPoint()
 		}
 
 		// Track query start time for stats
