@@ -14,6 +14,7 @@ Usage:
   faultwall --proxy [flags]        # run as inline proxy (main mode)
 
 Commands:
+  try          Zero-config monitor mode + live view (demo DB if no URL given)
   init         Scaffold a new faultwall.yaml policy file
   agent-url    Print a ready-to-use connection string
   version      Print version info
@@ -29,7 +30,11 @@ Proxy mode flags:
   --upstream-tls             Connect upstream using TLS
   --upstream-tls-skip-verify Skip upstream TLS verification
 
-Quick start:
+Fastest start (no YAML, never blocks):
+  faultwall try                               # demo Postgres + demo agent
+  faultwall try postgres://user:pass@host/db  # your DB, monitor mode
+
+Quick start (enforce):
   faultwall init                              # create policy file
   faultwall --proxy --policies faultwall.yaml # start proxy
   faultwall agent-url                         # copy connection string

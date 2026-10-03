@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FaultWall — live agent activity</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="/favicon.png">
+<style>
+  :root { --bg:#0b0e14; --panel:#131824; --line:#232b3b; --text:#e6e9ef; --dim:#8a93a6; --ok:#3ecf8e; --warn:#f5a524; --bad:#f2555a; --acc:#6aa9ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:12px; padding:14px 22px; border-bottom:1px solid var(--line); }
+  header img { width:26px; height:26px; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  .pill { font-size:12px; padding:2px 9px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .pill.mon { color:var(--warn); border-color:#5a4512; }
+  main { padding:18px 22px; max-width:1300px; margin:0 auto; }
+  .conn { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:16px; }
+  .conn label { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+  .conn .row { display:flex; gap:10px; align-items:center; margin-top:6px; }
+  .conn code { flex:1; font:13px ui-monospace,SFMono-Regular,Menlo,monospace; background:#0d111a; padding:8px 10px; border-radius:6px; border:1px solid var(--line); overflow-x:auto; white-space:nowrap; }
+  button { background:var(--acc); color:#08101f; border:0; border-radius:6px; padding:8px 12px; font-weight:600; cursor:pointer; }
+  .rules { color:var(--dim); font-size:12px; margin-top:8px; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
+  .stat b { display:block; font-size:26px; }
+  .stat span { color:var(--dim); font-size:12px; }
+  .grid { display:grid; grid-template-columns:300px 1fr; gap:16px; }
+  @media (max-width:900px) { .grid { grid-template-columns:1fr; } .stats { grid-template-columns:1fr; } }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .panel h2 { font-size:13px; margin:0; padding:10px 14px; border-bottom:1px solid var(--line); color:var(--dim); font-weight:600; }
+  .agent { padding:10px 14px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .agent:hover, .agent.sel { background:#182033; }
+  .agent .n { font-weight:600; }
+  .agent .m { color:var(--dim); font-size:12px; }
+  .agent .f { color:var(--warn); }
+  table { width:100%; border-collapse:collapse; }
+  td, th { text-align:left; padding:7px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--dim); font-weight:500; font-size:12px; }
+  td.q { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; word-break:break-word; }
+  td.t { color:var(--dim); white-space:nowrap; font-size:12px; }
+  .op { font-size:11px; padding:1px 6px; border-radius:4px; background:#1d2638; color:var(--acc); }
+  tr.flag td { background:rgba(245,165,36,.06); }
+  .why { color:var(--warn); font-size:12px; }
+  .ok { color:var(--ok); font-size:12px; }
+  .empty { padding:30px; text-align:center; color:var(--dim); }
+  .filters { display:flex; gap:8px; padding:8px 12px; border-bottom:1px solid var(--line); }
+  .filters label { color:var(--dim); font-size:12px; display:flex; gap:5px; align-items:center; }
+  a { color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <img src="/favicon.png" alt="">
+  <h1>FaultWall</h1>
+  <span class="pill mon">MONITOR MODE · never blocks</span>
+  <span class="pill" id="upstream">…</span>
+  <span style="flex:1"></span>
+  <a href="/dashboard" style="font-size:12px">full dashboard →</a>
+</header>
+<main>
+  <div class="conn">
+    <label>Give your agent this connection string</label>
+    <div class="row"><code id="agenturl">…</code><button id="copy">Copy</button></div>
+    <div class="rules" id="rules"></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="s-total">0</b><span>queries observed</span></div>
+    <div class="stat"><b id="s-flag" style="color:var(--warn)">0</b><span>would have been flagged</span></div>
+    <div class="stat"><b id="s-agents">0</b><span>agents seen</span></div>
+  </div>
+  <div class="grid">
+    <div class="panel">
+      <h2>Agents</h2>
+      <div id="agents"><div class="empty">Waiting for the first query…</div></div>
+    </div>
+    <div class="panel">
+      <h2>Live queries</h2>
+      <div class="filters">
+        <label><input type="checkbox" id="onlyflag"> flagged only</label>
+        <span id="agentfilter" style="font-size:12px;color:var(--dim)"></span>
+      </div>
+      <table><thead><tr><th style="width:80px">time</th><th style="width:130px">agent</th><th>query</th><th style="width:240px">verdict</th></tr></thead>
+      <tbody id="feed"><tr><td colspan="4" class="empty">Waiting for the first query… point your agent at the connection string above.</td></tr></tbody></table>
+    </div>
+  </div>
+</main>
+<script>
+let since = 0, events = [], selAgent = null;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+$('copy').onclick = () => { navigator.clipboard.writeText($('agenturl').textContent); $('copy').textContent = 'Copied'; setTimeout(()=>$('copy').textContent='Copy',1200); };
+$('onlyflag').onchange = render;
+fetch('/api/try/info').then(r=>r.json()).then(i => {
+  $('agenturl').textContent = i.agent_url;
+  $('upstream').textContent = (i.demo ? 'demo DB ' : 'upstream ') + i.upstream + (i.upstream_tls ? ' · TLS' : '');
+  $('rules').textContent = 'Flagged with zero config: ' + i.rules.join(' · ');
+});
+function render() {
+  const only = $('onlyflag').checked;
+  const rows = events.filter(e => (!only || e.flags.length) && (!selAgent || e.agent === selAgent)).slice(-300).reverse();
+  $('agentfilter').innerHTML = selAgent ? 'agent: <b>'+esc(selAgent)+'</b> (<a href="#" id="clr">clear</a>)' : '';
+  if (selAgent) $('clr').onclick = (ev) => { ev.preventDefault(); selAgent = null; render(); poll(true); };
+  if (!rows.length) return;
+  $('feed').innerHTML = rows.map(e => {
+    const t = new Date(e.time).toLocaleTimeString();
+    const verdict = e.flags.length
+      ? '<span class="why">⚠ ' + e.reasons.map(esc).join('<br>⚠ ') + '</span>'
+      : '<span class="ok">✓ observed</span>';
+    const rows = e.rows_known ? ' <span style="color:var(--dim);font-size:11px">' + e.rows + ' rows</span>' : '';
+    return `<tr class="${e.flags.length?'flag':''}"><td class="t">${t}</td><td>${esc(e.agent)}${e.mission?'<div class="t">'+esc(e.mission)+'</div>':''}</td>`+
+      `<td class="q"><span class="op">${esc(e.operation)}</span> ${esc(e.query)}${rows}</td><td>${verdict}</td></tr>`;
+  }).join('');
+}
+function renderAgents(agents) {
+  if (!agents.length) return;
+  agents.sort((a,b) => b.queries - a.queries);
+  $('agents').innerHTML = agents.map(a => {
+    const ops = Object.entries(a.ops).sort((x,y)=>y[1]-x[1]).map(([k,v])=>k+' '+v).join(' · ');
+    return `<div class="agent ${a.agent===selAgent?'sel':''}" data-a="${esc(a.agent)}"><div class="n">${esc(a.agent)}</div>`+
+      `<div class="m">${a.queries} queries · <span class="f">${a.flagged} flagged</span></div><div class="m">${esc(ops)}</div></div>`;
+  }).join('');
+  document.querySelectorAll('.agent').forEach(el => el.onclick = () => { selAgent = el.dataset.a; render(); poll(true); });
+}
+async function poll(rerenderOnly) {
+  try {
+    const r = await fetch('/api/try/activity?since=' + since);
+    const d = await r.json();
+    for (const e of d.events) {
+      const i = events.findIndex(x => x.id === e.id);
+      if (i >= 0) events[i] = e; else events.push(e);
+      since = Math.max(since, e.id);
+    }
+    // refresh the last few events so late row counts / flags show up
+    since = Math.max(0, since - 20);
+    if (events.length > 2000) events = events.slice(-2000);
+    $('s-total').textContent = d.total; $('s-flag').textContent = d.flagged; $('s-agents').textContent = d.agents.length;
+    renderAgents(d.agents); render();
+  } catch (e) {}
+}
+poll(); setInterval(poll, 1000);
+</script>
+</body>
+</html>
