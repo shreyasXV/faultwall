@@ -430,9 +430,11 @@ The existing `blocked_operations` field still works. If an agent has no `profile
 
 ## Privacy: what leaves your box (control-plane telemetry)
 
+**Query values never leave your box. Table and column names do, so we can show you what each agent touched.**
+
 Telemetry is **off** unless the proxy is enrolled to a control plane (`install.sh --token ...` writes `~/.faultwall/config.toml`, or set `FAULTWALL_CONTROL_PLANE_URL` + `FAULTWALL_CONTROL_PLANE_TOKEN`). Turn it all off with `FAULTWALL_TELEMETRY=false` or `telemetry_enabled = false`.
 
-`faultwall try` follows the same rule: on an enrolled box (same env or config file as `--proxy`) it also sends these events, so try sessions show up in the hosted feed. Not enrolled, `try` sends nothing.
+`faultwall try` follows the same rule. Enroll it with `faultwall try --token <TOKEN> --control-plane https://api.faultwall.com [postgres://...]` (try.sh passes both flags through), or use the same env / config file as `--proxy`. The startup banner's `Events go to:` line says where events are going. Without enrollment, `try` sends nothing.
 
 When enrolled, each statement sends one event:
 

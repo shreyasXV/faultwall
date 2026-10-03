@@ -7,6 +7,12 @@
 #   curl -fsSL https://app.faultwall.com/try.sh | bash -s -- postgres://user:pass@host:5432/db
 #       → FaultWall in MONITOR mode (never blocks) in front of YOUR database
 #
+#   curl -fsSL https://app.faultwall.com/try.sh | bash -s -- \
+#       --token <TOKEN> --control-plane https://api.faultwall.com postgres://...
+#       → same, and also sends activity metadata to your hosted dashboard.
+#         Query values never leave your box. Table and column names do, so we
+#         can show you what each agent touched.
+#
 # No sudo, no YAML, no Go toolchain. Installs the binary to ~/.faultwall/bin
 # (override with FAULTWALL_DIR) and runs `faultwall try` with your arguments.
 #
@@ -15,6 +21,11 @@
 #   FAULTWALL_DIR            install dir (default: ~/.faultwall/bin)
 #   FAULTWALL_DOWNLOAD_BASE  alternate release mirror (…/<version>/<asset>)
 #   FAULTWALL_NO_RUN=1       install only, don't start
+#   FAULTWALL_CONTROL_PLANE_URL / FAULTWALL_CONTROL_PLANE_TOKEN
+#                            same as --control-plane / --token (inherited by try)
+#
+# All arguments (including --token and --control-plane) are passed to
+# `faultwall try` unchanged.
 set -euo pipefail
 
 REPO="shreyasXV/faultwall"
@@ -84,6 +95,18 @@ fi
 if ! "$BIN" help 2>/dev/null | grep -q '^  try '; then
   die "FaultWall ${VERSION} predates 'faultwall try' — set FAULTWALL_VERSION to a newer release"
 fi
+
+# --token / --control-plane need a release that knows them; fail clearly
+# instead of "unknown flag".
+for a in "$@"; do
+  case "$a" in
+    --token|--control-plane)
+      if ! "$BIN" try --help 2>/dev/null | grep -q -- '--control-plane'; then
+        die "FaultWall ${VERSION} predates 'try --token/--control-plane'. Set FAULTWALL_VERSION to a newer release"
+      fi
+      break ;;
+  esac
+done
 
 # Re-attach stdin to the terminal so Ctrl+C works when piped from curl.
 if [[ ! -t 0 ]] && { true </dev/tty; } 2>/dev/null; then
