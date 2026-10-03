@@ -48,6 +48,9 @@ type AgentKeyEntry struct {
 	Agent     string `json:"agent"`
 	KeySHA256 string `json:"key_sha256"`
 	Revoked   bool   `json:"revoked"`
+	// SCRAM-SHA-256 verifier of the key (nil for keys created before SCRAM
+	// support; those need FW_ALLOW_CLEARTEXT_KEY=*** for key-as-password).
+	Scram *ScramVerifier `json:"scram,omitempty"`
 }
 
 // ManagedRule mirrors the control plane's approvals rule shape.
@@ -108,13 +111,16 @@ type AgentKeyStore struct {
 	mu      sync.RWMutex
 	byHash  map[string]AgentKeyEntry
 	byAgent map[string]int // number of keys (live or revoked) per agent
+	// live keys with a SCRAM verifier, per agent (SCRAM picks by agent name:
+	// the proxy never sees the raw key, so it can't look it up by hash).
+	scramByAgent map[string][]AgentKeyEntry
 }
 
 // agentKeys is the process-global store (empty until the first sync/cache load).
 var agentKeys = NewAgentKeyStore()
 
 func NewAgentKeyStore() *AgentKeyStore {
-	return &AgentKeyStore{byHash: map[string]AgentKeyEntry{}, byAgent: map[string]int{}}
+	return &AgentKeyStore{byHash: map[string]AgentKeyEntry{}, byAgent: map[string]int{}, scramByAgent: map[string][]AgentKeyEntry{}}
 }
 
 // HashAgentKey is the same sha256-hex scheme the control plane stores.
@@ -140,8 +146,14 @@ func (s *AgentKeyStore) Replace(entries []AgentKeyEntry) {
 		byHash[h] = e
 		byAgent[e.Agent]++
 	}
+	scramBy := map[string][]AgentKeyEntry{}
+	for _, e := range byHash {
+		if !e.Revoked && e.Scram.valid() {
+			scramBy[e.Agent] = append(scramBy[e.Agent], e)
+		}
+	}
 	s.mu.Lock()
-	s.byHash, s.byAgent = byHash, byAgent
+	s.byHash, s.byAgent, s.scramByAgent = byHash, byAgent, scramBy
 	s.mu.Unlock()
 }
 
@@ -158,6 +170,29 @@ func (s *AgentKeyStore) Lookup(raw string) (AgentKeyEntry, bool) {
 		return AgentKeyEntry{}, false
 	}
 	return e, ok
+}
+
+// ScramKeys returns the live keys of agent that have a SCRAM verifier.
+func (s *AgentKeyStore) ScramKeys(agent string) []AgentKeyEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]AgentKeyEntry(nil), s.scramByAgent[agent]...)
+}
+
+// LiveKeys reports how many live (unrevoked) keys agent has, and whether
+// all of them are revoked.
+func (s *AgentKeyStore) agentState(agent string) (live int, any bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, e := range s.byHash {
+		if e.Agent == agent {
+			any = true
+			if !e.Revoked {
+				live++
+			}
+		}
+	}
+	return
 }
 
 // HasAgent reports whether any key (live or revoked) was issued to name.

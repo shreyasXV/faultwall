@@ -7,13 +7,13 @@ package main
 //  1. As the Postgres password (the Connect screen's connection string):
 //       postgresql://support-agent:fw_ak_...@faultwall:5433/prod
 //     The startup `user` is a managed agent name, so the proxy terminates
-//     client auth itself: it asks the client for a cleartext password,
-//     verifies sha256(password) against the synced key hashes, then logs in
-//     upstream with ITS OWN database credentials (FW_UPSTREAM_USER /
-//     FW_UPSTREAM_PASSWORD, falling back to DATABASE_URL, then PGUSER /
-//     PGPASSWORD). The agent never holds real DB credentials.
-//     Cleartext is required because only the hash is stored (SCRAM would
-//     need the raw secret); use --tls-cert/--tls-key off a trusted network.
+//     client auth itself with SCRAM-SHA-256 against the agent's synced
+//     verifier (scram_server.go): the key never crosses the wire and the
+//     proxy never holds it. It then logs in upstream with ITS OWN database
+//     credentials (FW_UPSTREAM_USER / FW_UPSTREAM_PASSWORD, falling back to
+//     DATABASE_URL, then PGUSER / PGPASSWORD). The agent never holds real DB
+//     credentials. Cleartext key auth is only used for keys created before
+//     SCRAM support, and only when FW_ALLOW_CLEARTEXT_KEY=*** is set.
 //
 //  2. As the token in application_name (agent keeps its own DB creds):
 //       application_name=agent:support-agent:mission:triage:token:fw_ak_...
@@ -30,7 +30,9 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -204,6 +206,46 @@ func verifyAgentPassword(agent, password string, keys *AgentKeyStore) string {
 		return keyErr("this key belongs to a different agent, not %q.", agent)
 	}
 	return ""
+}
+
+// cleartextKeyAllowed: legacy cleartext key-as-password is opt-in only.
+func cleartextKeyAllowed() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("FW_ALLOW_CLEARTEXT_KEY")))
+	return v == "1" || v == "true" || v == "yes"
+}
+
+// authenticateAgentKey runs key-as-password auth for a managed agent with
+// the client: SCRAM-SHA-256 when the agent's key has a verifier, otherwise
+// cleartext if (and only if) explicitly allowed. Returns "" on success or the
+// FATAL message to send. Nothing is sent upstream before this succeeds.
+func authenticateAgentKey(r io.Reader, w io.Writer, agent string, keys *AgentKeyStore) (msg string, method string) {
+	live, any := keys.agentState(agent)
+	if any && live == 0 {
+		return keyErr("the key for agent %q was revoked. Create a new key on the Agents page.", agent), "none"
+	}
+	if sk := keys.ScramKeys(agent); len(sk) > 0 {
+		err := scramServerAuth(r, w, sk[0].Scram)
+		switch {
+		case err == nil:
+			return "", "scram-sha-256"
+		case errors.Is(err, errScramBadProof):
+			return keyErr("wrong key for agent %q. Copy the connection string from the Agents page (keys are shown once; create a new key if this one was lost).", agent), "scram-sha-256"
+		default:
+			return keyErr("agent %q key authentication failed: %v", agent, err), "scram-sha-256"
+		}
+	}
+	if !cleartextKeyAllowed() {
+		return keyErr("the key for agent %q was created before SCRAM support. Create a new key on the Agents page (or set FW_ALLOW_CLEARTEXT_KEY=*** on the proxy to accept it over cleartext).", agent), "none"
+	}
+	rw, ok := w.(net.Conn)
+	if !ok {
+		return keyErr("internal: cleartext auth needs a connection"), "cleartext"
+	}
+	pw, err := requestClientPassword(rw)
+	if err != nil {
+		return keyErr("agent %q: %v", agent, err), "cleartext"
+	}
+	return verifyAgentPassword(agent, pw, keys), "cleartext"
 }
 
 // upstreamCreds is what the proxy logs in upstream with for password-mode agents.

@@ -263,6 +263,7 @@ func TestKeyPasswordAuthWire(t *testing.T) {
 	old := agentKeys
 	agentKeys = testKeyStore()
 	defer func() { agentKeys = old }()
+	t.Setenv("FW_ALLOW_CLEARTEXT_KEY", "1") // legacy keys without a SCRAM verifier
 	t.Setenv("FW_UPSTREAM_USER", "fwproxy")
 	t.Setenv("FW_UPSTREAM_PASSWORD", "upstream-secret")
 

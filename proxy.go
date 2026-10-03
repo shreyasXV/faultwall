@@ -188,16 +188,13 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	startupBuf = auth.Startup
 	keyAuthed := auth.Mode != authPassthrough
 	if auth.Mode == authKeyPassword {
-		pw, perr := requestClientPassword(client)
-		if perr != nil {
-			log.Printf("Proxy: agent key auth for %s: %v", auth.ClaimedUser, perr)
-			return
-		}
-		if msg := verifyAgentPassword(auth.ClaimedUser, pw, agentKeys); msg != "" {
-			log.Printf("%s%s[REFUSED]%s %s remote=%s", colorRed, colorBold, colorReset, msg, client.RemoteAddr())
+		msg, method := authenticateAgentKey(client, client, auth.ClaimedUser, agentKeys)
+		if msg != "" {
+			log.Printf("%s%s[REFUSED]%s %s auth=%s remote=%s", colorRed, colorBold, colorReset, msg, method, client.RemoteAddr())
 			sendStartupError(client, msg)
 			return
 		}
+		log.Printf("Proxy: agent %s authenticated with its key (auth=%s)", auth.ClaimedUser, method)
 	}
 
 	agentLabel := "unknown"
