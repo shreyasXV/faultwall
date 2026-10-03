@@ -9,7 +9,7 @@ POLICY = os.environ["POLICY"]
 results = []
 
 def check(name, ok, detail=""):
-    for secret in (KEY, ROLEPW):
+    for secret in (KEY, ROLEPW, os.environ.get('PGPASSWORD_UP','\x00')):
         detail = str(detail).replace(secret, "<redacted>")
     results.append(ok)
     print(("PASS " if ok else "FAIL ") + name + (f"  [{detail[:300]}]" if detail and not ok else ""))
@@ -17,6 +17,8 @@ def check(name, ok, detail=""):
 PROXY = "127.0.0.1:15433"
 dsn = f"postgresql://support-agent:{KEY}@{PROXY}/{UPDB}?sslmode=disable"
 
+UPPORT, UPSU, UPSUPW = os.environ["UPPORT"], os.environ["UPSU"], os.environ["PGPASSWORD_UP"]
+check("upstream pg_hba enforces scram-sha-256 only (no trust)", os.environ.get("HBA") == "scram-sha-256", os.environ.get("HBA"))
 check("upstream role stored as SCRAM-SHA-256", os.environ.get("ENC", "").startswith("SCRAM-SHA-256"), os.environ.get("ENC"))
 
 pol = json.loads(POLICY)
@@ -27,7 +29,7 @@ check("real DB password absent from generated connection string", ROLEPW not in 
 
 # psql
 p = subprocess.run([PSQL, dsn, "-tAc", "select current_user || '|' || current_setting('application_name')"], capture_output=True, text=True, timeout=30)
-check("psql connects with key over SCRAM", p.returncode == 0 and p.stdout.strip() == f"{ROLE}|agent:support-agent:mission:default", p.stdout + p.stderr)
+check("psql connects with key over SCRAM (proxy then logs in upstream via SCRAM)", p.returncode == 0 and p.stdout.strip() == f"{ROLE}|agent:support-agent:mission:default", p.stdout + p.stderr)
 
 # psycopg3
 try:
@@ -61,7 +63,7 @@ if r is None:
 check("pgx connects with key over SCRAM", r.returncode == 0 and r.stdout.strip() == f"{ROLE}|agent:support-agent:mission:default", r.stdout + r.stderr)
 
 def backends():
-    with psycopg.connect(f"host=127.0.0.1 port=5544 dbname={UPDB} user=ec2-user") as c:
+    with psycopg.connect(f"host=127.0.0.1 port={UPPORT} dbname={UPDB} user={UPSU} password={UPSUPW}") as c:
         return c.execute("select count(*) from pg_stat_activity where usename=%s", (ROLE,)).fetchone()[0]
 
 before = backends()
@@ -73,12 +75,19 @@ except psycopg.OperationalError as e:
     check("wrong key refused with 28P01", "wrong key" in msg and "BLOCKED by FaultWall" in msg, msg)
 check("wrong key opens no upstream backend", backends() == before, f"{before} -> {backends()}")
 
-# The key is useless directly against Postgres.
+# The key is useless directly against Postgres (hba is scram, so these are real password checks).
+for user in ("support-agent", ROLE):
+    try:
+        psycopg.connect(f"host=127.0.0.1 port={UPPORT} dbname={UPDB} user={user} password={KEY}").close()
+        check(f"agent key rejected directly by Postgres (user={user})", False, "connected")
+    except psycopg.OperationalError as e:
+        check(f"agent key rejected directly by Postgres (user={user})", "password authentication failed" in str(e), e)
+# Sanity: the real role password does work directly, so the rejections above are meaningful.
 try:
-    psycopg.connect(f"host=127.0.0.1 port=5544 dbname={UPDB} user=support-agent password={KEY}").close()
-    check("agent key does not work directly against Postgres", False, "connected")
-except psycopg.OperationalError:
-    check("agent key does not work directly against Postgres", True)
+    psycopg.connect(f"host=127.0.0.1 port={UPPORT} dbname={UPDB} user={ROLE} password={ROLEPW}").close()
+    check("control: real role password works directly (upstream auth is live)", True)
+except psycopg.OperationalError as e:
+    check("control: real role password works directly (upstream auth is live)", False, e)
 
 log = open(f"{W}/proxy.log").read()
 check("proxy log: agent authenticated via scram-sha-256", "auth=scram-sha-256" in log, log[-500:])
