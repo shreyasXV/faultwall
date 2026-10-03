@@ -15,4 +15,5 @@ PASS proxy log: agent authenticated via scram-sha-256
 PASS raw key never appears in proxy log
 PASS real DB password never appears in proxy log
 PASS proxy demands SASL (code 10), never cleartext (code 3)
+
 17/17 passed
