@@ -1,0 +1,19 @@
+PASS upstream pg_hba enforces scram-sha-256 only (no trust)
+PASS upstream role stored as SCRAM-SHA-256
+PASS control plane syncs a SCRAM verifier (salt, 4096 iter, keys)
+PASS raw key absent from /v1/policy
+PASS real DB password absent from generated connection string
+PASS psql connects with key over SCRAM (proxy then logs in upstream via SCRAM)
+PASS psycopg3 connects with key over SCRAM, runs a write
+PASS pgx connects with key over SCRAM
+PASS wrong key refused with 28P01
+PASS wrong key opens no upstream backend
+PASS agent key rejected directly by Postgres (user=support-agent)
+PASS agent key rejected directly by Postgres (user=fw_scram_proxy)
+PASS control: real role password works directly (upstream auth is live)
+PASS proxy log: agent authenticated via scram-sha-256
+PASS raw key never appears in proxy log
+PASS real DB password never appears in proxy log
+PASS proxy demands SASL (code 10), never cleartext (code 3)
+
+17/17 passed

@@ -1,0 +1,28 @@
+PASS upstream pg_hba enforces scram-sha-256 only
+PASS control plane rejects a non-identifier db_role (400)
+PASS create API returns db_role in the agent view
+PASS /v1/policy agent_keys carries db_role (only where set)
+PASS ro-agent session runs as its db_role (current_user) on the proxy's login (session_user)
+PASS ro-agent SELECT works
+PASS ro-agent UPDATE fails with 42501 raised by Postgres itself (not FaultWall)
+PASS ro-agent INSERT fails with 42501 from Postgres
+PASS FaultWall blocks SET ROLE fw_dbrole_proxy (42501 'agent role is fixed')
+PASS FaultWall blocks RESET ROLE (42501 'agent role is fixed')
+PASS FaultWall blocks SET SESSION AUTHORIZATION fw_dbrole_proxy (42501 'agent role is fixed')
+PASS FaultWall blocks DISCARD ALL (42501 'agent role is fixed')
+PASS FaultWall blocks RESET ALL (42501 'agent role is fixed')
+PASS FaultWall blocks SELECT set_config('role', 'fw_dbrole_proxy', false) (42501 'agent role is fixed')
+PASS FaultWall blocks SET LOCAL ROLE in a txn (42501 'agent role is fixed')
+PASS FaultWall blocks set_config('role') over the extended protocol
+PASS FaultWall blocks a prepared RESET ROLE (Parse/Bind/Execute)
+PASS connection survives the blocked attempts, still pinned
+PASS after the attempts the write is still refused by Postgres
+PASS rw-agent (no db_role) runs as the proxy login and can write
+PASS db_role not granted to the proxy login: FATAL with a clear message
+PASS PATCH db_role "" clears it
+PASS open pinned session is ended after the role change syncs
+PASS reconnect after clearing runs without the role
+PASS proxy log records the pin and the refused role changes
+PASS no key or DB password in the proxy log
+
+26/26 passed

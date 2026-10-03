@@ -206,6 +206,12 @@ func main() {
 			telemetryClient.StartHeartbeat(60 * time.Second)
 			log.Printf("📡 Control-plane telemetry enabled → %s (metadata only)", cpCfg.URL)
 		}
+		// Per-agent keys + managed agent policies (agent_keys.go). Runs whenever
+		// a control plane url+token is configured, even with telemetry off.
+		if cpCfg, _ := loadControlPlaneConfig(); cpCfg.URL != "" && cpCfg.Token != "" && os.Getenv("FW_AGENT_KEYS") != "false" {
+			policySyncer = NewPolicySyncer(cpCfg.URL, cpCfg.Token, policyEngine, agentKeys)
+			policySyncer.Start()
+		}
 
 		// Self-disabling feature guards (see guards.go). Each guard runs a
 		// startup self-check; if the check fails, the new behavior turns
@@ -271,6 +277,7 @@ func main() {
 		mux.HandleFunc("/api/policies", handlePolicies)
 		mux.HandleFunc("/api/policies/yaml", handlePoliciesYAML)
 		mux.HandleFunc("/api/policies/reload", handlePoliciesReload)
+		mux.HandleFunc("/api/agent-keys", handleAgentKeysStatus)
 		mux.HandleFunc("/api/violations", handleViolations)
 		mux.HandleFunc("/api/qwm/flags", handleQWMFlags)
 		mux.HandleFunc("/api/apa/proposals", handleAPAProposals)

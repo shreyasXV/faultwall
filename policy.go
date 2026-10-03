@@ -154,6 +154,9 @@ type PolicyViolation struct {
 	PID       int       `json:"pid"`
 	Action    string    `json:"action"` // "blocked" or "monitored"
 	Timestamp time.Time `json:"timestamp"`
+	// FlagOnly marks a violation that must never block, even in enforce mode
+	// (e.g. a managed "ask first" rule on a proxy without hold support).
+	FlagOnly bool `json:"flag_only,omitempty"`
 }
 
 // PolicyEngine manages policy loading, enforcement, and violation tracking
@@ -164,6 +167,13 @@ type PolicyEngine struct {
 	enforcement  string // "enforce" | "monitor"
 	filePath     string
 	pausedAgents map[string]bool // agents that are paused (all queries blocked)
+
+	// Control-plane managed agents (agent_keys.go). managed is overlaid on
+	// every load; shadowed remembers what the overlay replaced so it can be
+	// undone and so SaveToFile never persists managed agents.
+	managed   *ManagedPolicy
+	shadowed  map[string]*AgentPolicy
+	flagRules []ManagedRule
 }
 
 func NewPolicyEngine() *PolicyEngine {
@@ -217,7 +227,9 @@ func (pe *PolicyEngine) LoadFromFile(path string) error {
 	}
 
 	pe.mu.Lock()
-	pe.config = &cfg
+	// Fresh file: nothing is shadowed yet; re-apply the managed overlay.
+	pe.shadowed = nil
+	pe.config = pe.overlayManagedLocked(&cfg)
 	pe.mu.Unlock()
 
 	log.Printf("Policy engine: loaded %d agent policies from %s (default: %s)", len(cfg.Agents), path, cfg.DefaultPolicy)
@@ -233,6 +245,22 @@ func (pe *PolicyEngine) Reload() error {
 func (pe *PolicyEngine) SaveToFile() error {
 	pe.mu.RLock()
 	cfg := pe.config
+	if cfg != nil && len(pe.shadowed) > 0 {
+		// Never write control-plane managed agents into the local file.
+		base := *cfg
+		base.Agents = make(map[string]AgentPolicy, len(cfg.Agents))
+		for k, v := range cfg.Agents {
+			base.Agents[k] = v
+		}
+		for name, orig := range pe.shadowed {
+			if orig != nil {
+				base.Agents[name] = *orig
+			} else {
+				delete(base.Agents, name)
+			}
+		}
+		cfg = &base
+	}
 	pe.mu.RUnlock()
 
 	if cfg == nil {
@@ -906,7 +934,9 @@ func (pe *PolicyEngine) checkQueryImpl(identity *AgentIdentity, parsed *ParsedQu
 	if identity.MissionID != "" {
 		missionPolicy, missionExists := agentPolicy.Missions[identity.MissionID]
 		if !missionExists {
-			if cfg.DefaultPolicy == "deny" {
+			// Control-plane managed agents have no mission map: a mission is
+			// just a label for them, so it never denies on its own.
+			if cfg.DefaultPolicy == "deny" && !pe.isManagedAgent(identity.AgentID) {
 				return &PolicyViolation{
 					AgentID:   identity.AgentID,
 					MissionID: identity.MissionID,

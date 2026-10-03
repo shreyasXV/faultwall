@@ -1,0 +1,21 @@
+PASS psycopg3 key-as-password connects + reads  [rows=5]
+PASS session labeled upstream as agent:support-agent:mission:default  [current_user=ec2-user application_name=agent:support-agent:mission:default]
+PASS key never reaches Postgres (not in pg_stat_activity)
+PASS write with writes=hold compiles to flag: runs (enforce mode)
+PASS write flagged as needs_approval in proxy log
+PASS DDL blocked  [[BLOCKED by FaultWall] blocked_operation (op: DROP) [0.04ms]]
+PASS psql key-as-password connects + labeled  [agent:support-agent:mission:default]
+PASS key as application_name token: verified + stripped  [agent:support-agent:mission:triage]
+PASS unknown key refused at startup  [connection failed: connection to server at "127.0.0.1", port 15433 failed: FATAL:  [BLOCKED by FaultWall] FaultWall: unknown agent key for "support-agent". Copy the connection string from the Agents page (keys are shown once; create a new key if this one was lost).]
+PASS managed agent name without key refused (no spoofing)  [connection failed: connection to server at "127.0.0.1", port 15433 failed: FATAL:  [BLOCKED by FaultWall] FaultWall: agent "support-agent" is managed by FaultWall and needs its key. Connect with the connection string from the Agents page (or add :token:<key> to application_name).]
+PASS legacy application_name identity (backward compat)
+PASS new agent usable within one sync interval (3s)  [took 2.99s]
+PASS analytics writes=block refused  [[BLOCKED by FaultWall] blocked_operation (op: INSERT) [0.80ms]]
+PASS toggle change (writes block->allow) applied after sync
+PASS revoke endpoint
+PASS revoked key refused (key as password)  [connection failed: connection to server at "127.0.0.1", port 15433 failed: FATAL:  [BLOCKED by FaultWall] FaultWall: the key for agent "analytics" was revoked. Create a new key on the Agents page.]
+PASS revoked key refused (psql)  [psql: error: connection to server at "127.0.0.1", port 15433 failed: FATAL:  [BLOCKED by FaultWall] FaultWall: the key for agent "analytics" was revoked. Create a new key on the Agents page.]
+PASS revoked key refused (key as token)  [connection failed: connection to server at "127.0.0.1", port 15433 failed: FATAL:  [BLOCKED by FaultWall] FaultWall: the key for agent "analytics" was revoked. Create a new key on the Agents page.]
+PASS proxy status shows only live agents  [{"agents": ["support-agent"], "keys": 2, "last_error": ""}]
+
+19/19 passed

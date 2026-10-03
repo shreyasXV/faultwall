@@ -174,9 +174,28 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		}
 	}
 
-	// 2. Extract application_name from startup parameters
+	// 2. Resolve identity. Per-agent keys (agent_auth.go) first: a key as the
+	// PG password or as the application_name token. Otherwise the legacy
+	// application_name identity is used unchanged.
 	appName := extractAppName(startupBuf)
-	identity := ParseAgentIdentity(appName)
+	auth := startupAgentAuth(startupBuf, agentKeys)
+	if auth.Err != "" {
+		log.Printf("%s%s[REFUSED]%s %s remote=%s", colorRed, colorBold, colorReset, auth.Err, client.RemoteAddr())
+		sendStartupError(client, auth.Err)
+		return
+	}
+	identity := auth.Identity
+	startupBuf = auth.Startup
+	keyAuthed := auth.Mode != authPassthrough
+	if auth.Mode == authKeyPassword {
+		msg, method := authenticateAgentKey(client, client, auth.ClaimedUser, agentKeys)
+		if msg != "" {
+			log.Printf("%s%s[REFUSED]%s %s auth=%s remote=%s", colorRed, colorBold, colorReset, msg, method, client.RemoteAddr())
+			sendStartupError(client, msg)
+			return
+		}
+		log.Printf("Proxy: agent %s authenticated with its key (auth=%s)", auth.ClaimedUser, method)
+	}
 
 	agentLabel := "unknown"
 	if identity != nil {
@@ -197,7 +216,10 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 			ap, ok := cfg.Agents[identity.AgentID]
 			agentHasToken := ok && ap.AuthToken != ""
 			tokensMatch := agentHasToken && identity.Token == ap.AuthToken
-			if agentHasToken {
+			if keyAuthed {
+				// Already verified against a control-plane agent key.
+				agentHasToken, tokensMatch = true, true
+			} else if agentHasToken {
 				if identity.Token == "" || !tokensMatch {
 					log.Printf("%s%s[BLOCKED]%s auth token mismatch for agent=%s",
 						colorRed, colorBold, colorReset, agentLabel)
@@ -226,7 +248,23 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	}
 	defer upstream.Close()
 
-	// 4. Forward startup message to upstream
+	// 4. Forward startup message to upstream. Key-as-password agents log in
+	// upstream with the proxy's own DB credentials, labeled as the agent.
+	var creds upstreamCreds
+	if auth.Mode == authKeyPassword {
+		var ok bool
+		creds, ok = resolveUpstreamCreds()
+		if !ok {
+			msg := keyErr("this proxy has no database login for key-authenticated agents. Set FW_UPSTREAM_USER and FW_UPSTREAM_PASSWORD (or DATABASE_URL) on the FaultWall container.")
+			log.Printf("%s%s[REFUSED]%s %s", colorRed, colorBold, colorReset, msg)
+			sendStartupError(client, msg)
+			return
+		}
+		proto, params := parseStartupParams(startupBuf)
+		params = startupSet(params, "user", creds.User)
+		params = startupSet(params, "application_name", identity.Raw)
+		startupBuf = buildStartupMessage(proto, params)
+	}
 	if _, err := upstream.Write(startupBuf); err != nil {
 		log.Printf("Proxy: failed to forward startup to upstream: %v", err)
 		return
@@ -235,18 +273,55 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	// 5. Relay auth handshake until ReadyForQuery ('Z'). Capture the
 	// upstream backend PID (from BackendKeyData) so REAL-F9 can tell
 	// proxy-originated sessions from direct-to-DB bypasses.
-	upstreamPID, err := relayAuth(client, upstream)
+	// A key-authenticated agent with a db_role gets SET SESSION ROLE before
+	// it can send anything, so ReadyForQuery is held back until then.
+	pinnedRole := ""
+	if keyAuthed && identity != nil {
+		pinnedRole = agentKeys.DBRole(identity.AgentID)
+	}
+	var upstreamPID int
+	if auth.Mode == authKeyPassword {
+		upstreamPID, err = upstreamLogin(client, upstream, creds, pinnedRole == "")
+	} else {
+		upstreamPID, err = relayAuth(client, upstream, pinnedRole == "")
+	}
 	if err != nil {
 		log.Printf("Proxy: auth relay failed for agent=%s: %v", agentLabel, err)
 		return
+	}
+	if pinnedRole != "" {
+		if err := applySessionRole(client, upstream, pinnedRole); err != nil {
+			msg := keyErr("could not switch agent %q to its database role %q: %v. Check that the role exists and is granted to FaultWall's database user (GRANT %s TO <proxy user>), or clear the agent's DB role on the Agents page.",
+				identity.AgentID, pinnedRole, err, pinnedRole)
+			log.Printf("%s%s[REFUSED]%s %s", colorRed, colorBold, colorReset, msg)
+			_, _ = client.Write(fatalMessage("42501", msg))
+			return
+		}
+		rfq, _ := (&pgproto3.ReadyForQuery{TxStatus: 'I'}).Encode(nil)
+		if _, err := client.Write(rfq); err != nil {
+			return
+		}
+		log.Printf("Proxy: agent %s pinned to database role %q", identity.AgentID, pinnedRole)
 	}
 	if upstreamPID > 0 {
 		proxyBackendRegistry.Register(upstreamPID)
 		defer proxyBackendRegistry.Deregister(upstreamPID)
 	}
 
-	// 6. Main proxy loop
-	proxyQueryLoop(client, upstream, identity, agentLabel, pe)
+	// 6. Main proxy loop. Key-authenticated sessions are registered so that
+	// revoking the agent's key on the control plane also ends them.
+	var killCh chan string
+	if keyAuthed && identity != nil {
+		killCh = make(chan string, 1)
+		unregister := agentSessions.Register(identity.AgentID, pinnedRole, func(msg string) {
+			select {
+			case killCh <- msg:
+			default:
+			}
+		})
+		defer unregister()
+	}
+	proxyQueryLoop(client, upstream, identity, agentLabel, pe, killCh, pinnedRole)
 }
 
 // readStartupMessage reads a PostgreSQL startup message (no type byte).
@@ -310,13 +385,17 @@ func indexOf(b []byte, v byte) int {
 // handshake. Returns the upstream backend PID parsed from BackendKeyData
 // ('K'), or 0 if not seen — used by REAL-F9 bypass detection to track
 // which sessions the proxy has originated.
-func relayAuth(client, upstream net.Conn) (int, error) {
+// forwardReady=false holds back the final ReadyForQuery (see upstreamLogin).
+func relayAuth(client, upstream net.Conn, forwardReady bool) (int, error) {
 	upstreamPID := 0
 	for {
 		// Read message from upstream (server)
 		msgType, payload, err := readWireMessage(upstream)
 		if err != nil {
 			return upstreamPID, fmt.Errorf("reading upstream auth message: %w", err)
+		}
+		if msgType == 'Z' && !forwardReady {
+			return upstreamPID, nil
 		}
 
 		// Forward to client
@@ -393,8 +472,27 @@ func writeWireMessage(w io.Writer, msgType byte, payload []byte) error {
 }
 
 // proxyQueryLoop is the main loop: reads client messages, inspects queries, forwards or blocks.
-func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLabel string, pe *PolicyEngine) {
+// pinnedRole != "" means the session was switched to that db_role and any
+// attempt to change or reset the role is refused (role_pin.go).
+func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLabel string, pe *PolicyEngine, killCh <-chan string, pinnedRole string) {
 	var clientWriteMu sync.Mutex
+
+	// Revoked-key kill switch: FATAL to the client, then close both sides.
+	loopDone := make(chan struct{})
+	defer close(loopDone)
+	if killCh != nil {
+		go func() {
+			select {
+			case msg := <-killCh:
+				clientWriteMu.Lock()
+				_, _ = client.Write(fatalRevokedMessage(msg))
+				clientWriteMu.Unlock()
+				client.Close()
+				upstream.Close()
+			case <-loopDone:
+			}
+		}()
+	}
 
 	// REAL-F2: per-connection search_path. proxyQueryLoop is one goroutine
 	// per client connection — the right scope. We watch every Q/Parse for a
@@ -434,6 +532,23 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 	// `faultwall try` live activity feed (nil / no-op outside try mode).
 	tryConn := newTryConnState()
+
+	// Last transaction status from upstream ReadyForQuery, so a refused
+	// statement reports the real state ('I', 'T' or 'E').
+	var lastTxStatus atomic.Value
+	lastTxStatus.Store(byte('I'))
+	txStatus := func() byte { return lastTxStatus.Load().(byte) }
+	refuseRoleChange := func(query, why string) {
+		log.Printf("%s%s[BLOCKED]%s %s role change refused (pinned to %q, %s): %s",
+			colorRed, colorBold, colorReset, agentLabel, pinnedRole, why, querySnippet(query))
+		if identity != nil {
+			pe.addViolation(PolicyViolation{AgentID: identity.AgentID, MissionID: identity.MissionID, Query: query,
+				Reason: "agent role is fixed (" + why + ")", Operation: "SET_ROLE", Action: "blocked", Timestamp: time.Now()})
+		}
+		clientWriteMu.Lock()
+		_, _ = client.Write(roleFixedResponse(pinnedRole, why, txStatus()))
+		clientWriteMu.Unlock()
+	}
 
 	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
@@ -479,6 +594,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 			// ReadyForQuery ('Z') = query complete, reset row counter and stop timer
 			if msgType == 'Z' {
+				if len(payload) == 1 {
+					lastTxStatus.Store(payload[0])
+				}
 				// Record per-query stats in agent tracker
 				if agentTracker != nil && identity != nil && !queryStartTime.IsZero() {
 					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
@@ -527,6 +645,34 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		}
 
 		// Simple query protocol: type 'Q'
+		// Pinned db_role: refuse role changes before anything else, in every
+		// enforcement mode (the role is part of the agent's credentials).
+		if pinnedRole != "" {
+			if msgType == 'Q' && len(payload) > 1 {
+				q := string(payload[:len(payload)-1])
+				if hit, why := roleChangeAttempt(q); hit {
+					refuseRoleChange(q, why)
+					continue
+				}
+			}
+			if msgType == 'P' && len(payload) > 1 {
+				stmtName, q := extractParseMessage(payload)
+				if hit, why := roleChangeAttempt(q); hit {
+					blockedStmts[stmtName] = true
+					stmts.close('S', stmtName)
+					drainUntilSync(client)
+					refuseRoleChange(q, why)
+					continue
+				}
+			}
+			if msgType == 'F' {
+				// Fast-path FunctionCall takes a function OID (e.g. set_config)
+				// the proxy can't vet; refuse it for pinned sessions.
+				refuseRoleChange("<FunctionCall>", "fast-path function calls are not allowed for agents with a DB role")
+				continue
+			}
+		}
+
 		if msgType == 'Q' && len(payload) > 1 {
 			query := string(payload[:len(payload)-1])
 			// REAL-F2: track per-connection search_path BEFORE the policy
@@ -547,7 +693,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			}
 			tryConn.onSimpleQuery(agentLabel, identity, query, pq, violation)
 
-			if violation != nil && pe.GetEnforcement() == "enforce" {
+			if violation != nil && pe.GetEnforcement() == "enforce" && !violation.FlagOnly {
 				violation.Action = "blocked"
 				pe.addViolation(*violation)
 				clientWriteMu.Lock()
@@ -600,7 +746,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				}
 				tryConn.onParse(stmtName, query, pq, violation)
 
-				if violation != nil && pe.GetEnforcement() == "enforce" {
+				if violation != nil && pe.GetEnforcement() == "enforce" && !violation.FlagOnly {
 					violation.Action = "blocked"
 					pe.addViolation(*violation)
 
@@ -906,6 +1052,10 @@ func safeCheckQueryWithContext(pe *PolicyEngine, identity *AgentIdentity, query 
 		}
 	}()
 	violation = pe.CheckQueryWithContext(identity, parsed, query, 0, ctx)
+	if violation == nil {
+		// Managed "ask first" rules on a proxy that can't pause: flag only.
+		violation = pe.checkFlagRules(identity, parsed, query)
+	}
 	return
 }
 
