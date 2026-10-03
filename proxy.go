@@ -650,6 +650,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				}
 				recordObservation(agentLabel, identity, query, pq, false)
 				stmts.parseTimed(stmtName, query, pq, violation, decisionLatencyMs)
+				if violation != nil {
+					telConn.noteParse("monitored", "flag", violation, pq, query, decisionLatencyMs)
+				} else {
+					telConn.noteParse("allowed", "allow", nil, pq, query, decisionLatencyMs)
+				}
 			}
 		}
 

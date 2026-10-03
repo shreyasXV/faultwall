@@ -60,6 +60,12 @@ type telemetryConn struct {
 	// batch is never pinned on a statement from the next batch.
 	sent int64
 	recv int64
+	// lastParse is the most recent Parse not yet followed by an Execute. If
+	// upstream rejects it (unknown table, syntax error) there is no Execute
+	// and no pending entry; onError reports it as a failed attempt instead.
+	lastParse      *pendingTelemetry
+	failedParseQ   string
+	failedParseEpo int64
 }
 
 func newTelemetryConn(identity *AgentIdentity, agentLabel string) *telemetryConn {
@@ -157,9 +163,31 @@ func (c *telemetryConn) enqueue(eventType, decision string, v *PolicyViolation, 
 	}
 }
 
+// noteParse remembers a forwarded Parse so a Parse-time error is still
+// reported (as a failed attempt) even though no Execute will follow.
+func (c *telemetryConn) noteParse(eventType, decision string, v *PolicyViolation, pq *ParsedQuery, query string, latencyMs float64) {
+	if c == nil {
+		return
+	}
+	p := &pendingTelemetry{item: c.baseItem(eventType, decision, v, pq, query, latencyMs), remaining: 1}
+	c.mu.Lock()
+	p.epoch = c.sent
+	c.lastParse = p
+	c.mu.Unlock()
+}
+
 // enqueueStmt registers one run of a prepared statement (Execute).
 func (c *telemetryConn) enqueueStmt(st *preparedStmt) {
 	if c == nil || st == nil {
+		return
+	}
+	c.mu.Lock()
+	c.lastParse = nil
+	// Parse of this statement already failed in this sync batch (error raced
+	// ahead of the Execute) and was reported; the server skips the Execute.
+	skip := c.failedParseQ != "" && c.failedParseQ == st.query && c.failedParseEpo == c.sent
+	c.mu.Unlock()
+	if skip {
 		return
 	}
 	eventType, decision := "allowed", "allow"
@@ -222,11 +250,22 @@ func (c *telemetryConn) onError() {
 	}
 	c.mu.Lock()
 	if len(c.pending) == 0 || c.pending[0].epoch != c.recv {
+		lp := c.lastParse
+		if lp != nil && lp.epoch == c.recv {
+			c.lastParse = nil
+			c.failedParseQ, c.failedParseEpo = lp.item.raw, lp.epoch
+			c.mu.Unlock()
+			c.finish(lp, true)
+			return
+		}
 		c.mu.Unlock()
 		return
 	}
 	p := c.pending[0]
 	c.pending = c.pending[1:]
+	if c.lastParse != nil && c.lastParse.epoch == c.recv {
+		c.lastParse = nil
+	}
 	c.mu.Unlock()
 	c.finish(p, true)
 }
@@ -255,6 +294,9 @@ func (c *telemetryConn) onReady() {
 	}
 	done := c.pending[:i:i]
 	c.pending = c.pending[i:]
+	if c.lastParse != nil && c.lastParse.epoch <= c.recv {
+		c.lastParse = nil // parsed fine, never executed (e.g. psycopg prepare)
+	}
 	c.recv++
 	c.mu.Unlock()
 	for _, p := range done {

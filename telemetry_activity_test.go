@@ -207,13 +207,34 @@ func TestTelemetryConnRowAttribution(t *testing.T) {
 	c.onCommandComplete([]byte("INSERT 0 1\x00"))
 	c.onReady()
 
+	// 5. psycopg-style prepare: Parse+Sync alone, rejected at Parse -> failed attempt
+	bad := "SELECT * FROM no_such_table WHERE x = 'secret-xyz'"
+	c.noteParse("allowed", "allow", nil, ParseQuery(bad), bad, 0)
+	c.onSyncPoint()
+	c.onError()
+	c.onReady()
+
+	// 6. Parse/Bind/Execute/Sync in one write, Parse error races ahead of
+	// Execute: reported once, the skipped Execute is not double counted.
+	sbad := &preparedStmt{query: bad, pq: ParseQuery(bad)}
+	c.noteParse("allowed", "allow", nil, sbad.pq, bad, 0)
+	c.onError()
+	c.enqueueStmt(sbad)
+	c.onSyncPoint()
+	c.onReady()
+
+	// 7. prepare that succeeds (Parse+Sync, no Execute) emits nothing
+	c.noteParse("allowed", "allow", nil, ParseQuery("SELECT 1"), "SELECT 1", 0)
+	c.onSyncPoint()
+	c.onReady()
+
 	// unnamed connection
 	u := newTelemetryConn(nil, "psql")
 	u.emitNow("blocked", "block", &PolicyViolation{Reason: "blocked_operation", Operation: "DROP"}, ParseQuery("DROP TABLE x"), "DROP TABLE x", 0.1)
 
 	evs := done()
-	if len(evs) != 7 {
-		t.Fatalf("want 7 events, got %d: %+v", len(evs), evs)
+	if len(evs) != 9 {
+		t.Fatalf("want 9 events, got %d: %+v", len(evs), evs)
 	}
 	type exp struct {
 		op     string
@@ -222,21 +243,22 @@ func TestTelemetryConnRowAttribution(t *testing.T) {
 		known  bool
 	}
 	want := []exp{{"UPDATE", 3, false, true}, {"UPDATE", 2, false, true}, {"SELECT", 5, false, true},
-		{"INSERT", 0, true, false}, {"SELECT", 0, true, false}, {"INSERT", 1, false, true}, {"DROP", 0, false, true}}
+		{"INSERT", 0, true, false}, {"SELECT", 0, true, false}, {"INSERT", 1, false, true},
+		{"SELECT", 0, true, false}, {"SELECT", 0, true, false}, {"DROP", 0, false, true}}
 	for i, w := range want {
 		e := evs[i]
 		if e.OpType != w.op || e.RowsAffected != w.rows || e.Failed != w.failed || e.RowsKnown != w.known {
 			t.Errorf("event %d: got op=%s rows=%d failed=%v known=%v; want %+v", i, e.OpType, e.RowsAffected, e.Failed, e.RowsKnown, w)
 		}
-		if i < 6 && (e.AgentID != "support-agent" || e.Mission != "refunds" || e.AgentUnnamed) {
+		if i < 8 && (e.AgentID != "support-agent" || e.Mission != "refunds" || e.AgentUnnamed) {
 			t.Errorf("event %d agent = %q/%q unnamed=%v", i, e.AgentID, e.Mission, e.AgentUnnamed)
 		}
 	}
-	if evs[6].AgentID != "psql" || !evs[6].AgentUnnamed || evs[6].Decision != "block" {
-		t.Errorf("unnamed event: %+v", evs[6])
+	if evs[8].AgentID != "psql" || !evs[8].AgentUnnamed || evs[8].Decision != "block" {
+		t.Errorf("unnamed event: %+v", evs[8])
 	}
 	for _, e := range evs {
-		if strings.Contains(e.QueryShape, "refunded") || strings.Contains(e.QueryShape, "closed") {
+		if strings.Contains(e.QueryShape, "refunded") || strings.Contains(e.QueryShape, "closed") || strings.Contains(e.QueryShape, plantedSecret) {
 			t.Errorf("literal in shape %q", e.QueryShape)
 		}
 	}
