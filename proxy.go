@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -163,6 +164,12 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 				return
 			}
 		} else if proto == 80877102 { // CancelRequest
+			// Live-query approvals: a statement held by FaultWall hasn't
+			// reached Postgres, so the cancel must resolve the hold instead.
+			if len(startupBuf) >= 16 && holdReg.cancelByKey(hex.EncodeToString(startupBuf[8:16])) {
+				log.Printf("[HOLD] CancelRequest resolved a held statement (denied, 57014)")
+				return
+			}
 			upstream, dialErr := dialUpstream(upstreamAddr, upstreamTLSConfig)
 			if dialErr == nil {
 				upstream.Write(startupBuf)
@@ -329,6 +336,9 @@ func relayAuth(client, upstream net.Conn) (int, error) {
 			if len(payload) >= 4 {
 				upstreamPID = int(binary.BigEndian.Uint32(payload[:4]))
 			}
+			if len(payload) >= 8 { // pid+secret: lets a CancelRequest find a held statement
+				connBackendKeys.Store(client, hex.EncodeToString(payload[:8]))
+			}
 		case 'Z': // ReadyForQuery — auth complete
 			return upstreamPID, nil
 		case 'E': // ErrorResponse from upstream
@@ -435,6 +445,16 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 	// `faultwall try` live activity feed (nil / no-op outside try mode).
 	tryConn := newTryConnState()
 
+	// Track allowed prepared statements so repeat Executes (cached prepared
+	// statements: psycopg3, pgx, JDBC) are logged and counted every run.
+	stmts := newStmtTracker()
+
+	// Live-query approvals (hold_gate.go): owns the client socket reader,
+	// buffers extended-protocol groups up to Sync and parks held statements.
+	gate := newHoldGate(pe, identity, agentLabel, client, upstream, stmts)
+	defer gate.close()
+	defer connBackendKeys.Delete(client)
+
 	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
 		for {
@@ -479,6 +499,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 			// ReadyForQuery ('Z') = query complete, reset row counter and stop timer
 			if msgType == 'Z' {
+				if len(payload) > 0 {
+					gate.txn.onReady(payload[0])
+				}
 				// Record per-query stats in agent tracker
 				if agentTracker != nil && identity != nil && !queryStartTime.IsZero() {
 					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
@@ -503,6 +526,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				atomic.StoreInt32(&queryTimedOut, 0)
 			}
 
+			// Denied hold: swap PG's marker error for the FaultWall message.
+			payload = gate.rewriteUpstream(msgType, payload)
+
 			// Forward to client
 			clientWriteMu.Lock()
 			wErr := writeWireMessage(client, msgType, payload)
@@ -515,12 +541,19 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 	// Track blocked Parse statements by name so we can block their Execute too
 	blockedStmts := make(map[string]bool)
-	// Track allowed prepared statements so repeat Executes (cached prepared
-	// statements: psycopg3, pgx, JDBC) are logged and counted every run.
-	stmts := newStmtTracker()
+	// drain discards client messages up to Sync. Reads go through the gate:
+	// its reader goroutine owns the client socket.
+	drain := func() {
+		for {
+			t, _, err := gate.next()
+			if err != nil || t == 'S' {
+				return
+			}
+		}
+	}
 
 	for {
-		msgType, payload, err := readWireMessage(client)
+		msgType, payload, err := gate.next()
 		if err != nil {
 			upstream.Close()
 			return
@@ -610,7 +643,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 					// Don't forward Parse — drain remaining messages until Sync,
 					// then send ErrorResponse + ReadyForQuery
-					drainUntilSync(client)
+					drain()
 					clientWriteMu.Lock()
 					sendExtendedBlockedResponse(client, violation, decisionLatencyMs)
 					clientWriteMu.Unlock()
@@ -644,7 +677,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			tryConn.onBind(portalName, stmtName)
 			if blockedStmts[stmtName] {
 				// Skip this Bind — drain until Sync and send error
-				drainUntilSync(client)
+				drain()
 				clientWriteMu.Lock()
 				sendGenericBlockedResponse(client, "Statement was blocked by FaultWall policy")
 				clientWriteMu.Unlock()
@@ -658,7 +691,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		if msgType == 'E' && len(payload) > 1 {
 			portalName := extractNullTerminated(payload, 0)
 			if blockedStmts[portalName] {
-				drainUntilSync(client)
+				drain()
 				clientWriteMu.Lock()
 				sendGenericBlockedResponse(client, "Statement was blocked by FaultWall policy")
 				clientWriteMu.Unlock()
