@@ -86,6 +86,7 @@ type PolicyConfig struct {
 	Agents           map[string]AgentPolicy         `yaml:"agents" json:"agents"`
 	Unidentified     UnidentifiedPolicy             `yaml:"unidentified" json:"unidentified"`
 	APA              APASection                     `yaml:"apa" json:"apa"`
+	Approvals        ApprovalsConfig                `yaml:"approvals,omitempty" json:"approvals,omitempty"` // live-query holds (hold_rules.go)
 }
 
 // FingerprintRule is one entry in an agent's AllowedFingerprints or PendingReview list.
