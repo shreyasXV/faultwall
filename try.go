@@ -49,6 +49,7 @@ type tryOptions struct {
 	Agent       string // agent name used in the printed connection string
 	Open        bool
 	Duration    time.Duration // 0 = run until Ctrl+C
+	Hold        string        // --hold rule spec: pause matching statements for approval
 }
 
 func inContainer() bool {
@@ -82,7 +83,7 @@ func parseTryArgs(args []string, getenv func(string) string) (*tryOptions, error
 			o.DemoAgent = false
 		case a == "--no-open":
 			o.Open = false
-		case a == "--listen", a == "--port", a == "--ui-port", a == "--agent", a == "--db", a == "--for":
+		case a == "--listen", a == "--port", a == "--ui-port", a == "--agent", a == "--db", a == "--for", a == "--hold":
 			v, err := next()
 			if err != nil {
 				return nil, err
@@ -114,6 +115,11 @@ func parseTryArgs(args []string, getenv func(string) string) (*tryOptions, error
 				o.Agent = v
 			case "--db":
 				o.DatabaseURL = v
+			case "--hold":
+				if _, err := parseHoldSpec(v); err != nil {
+					return nil, err
+				}
+				o.Hold = v
 			case "--for":
 				d, err := time.ParseDuration(v)
 				if err != nil {
@@ -176,7 +182,11 @@ Flags:
   --demo             Force demo mode even if DATABASE_URL is set
   --no-demo-agent    Demo Postgres only, no scripted agent
   --no-open          Don't open the browser
-  --for DURATION     Exit after DURATION (e.g. 2m); default runs until Ctrl+C`)
+  --for DURATION     Exit after DURATION (e.g. 2m); default runs until Ctrl+C
+  --hold RULES       Pause matching statements until you approve them in the live view
+                     (or POST /api/holds/{id}/approve|deny). RULES = OPS[:TABLES][@AGENTS];...
+                     e.g. --hold 'UPDATE,DELETE:orders'  --hold 'WRITE@support-bot'
+                     No decision within 120s (FW_HOLD_TIMEOUT) = denied.`)
 }
 
 // upstreamTarget is the parsed DATABASE_URL.
@@ -608,6 +618,8 @@ func tryMux(info *tryInfo) *http.ServeMux {
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"status": "ok", "mode": "try"})
 	})
+	mux.HandleFunc("/api/holds", handleHolds)
+	mux.HandleFunc("/api/holds/", handleHoldAction)
 	mux.HandleFunc("/api/firewall/agents", handleFirewallAgents)
 	mux.HandleFunc("/api/violations", handleViolations)
 	mux.HandleFunc("/api/policies", handlePolicies)
@@ -682,6 +694,12 @@ func runTry(args []string) error {
 
 	// Globals the proxy + API handlers use.
 	policyEngine = tryPolicyEngine()
+	if opts.Hold != "" {
+		rules, _ := parseHoldSpec(opts.Hold)
+		envHoldRules = append(envHoldRules, rules...)
+		envHoldMode = "always" // an explicit --hold opts in to pausing, even in monitor mode
+		initHoldControlPlane()
+	}
 	agentTracker = NewAgentTracker()
 	tryActivity = NewTryActivityStore(1000)
 	tryActivity.onFlag = func(ev *TryEvent, flags []string) {
@@ -755,6 +773,9 @@ func runTry(args []string) error {
 	fmt.Println("                    you use, or its queries show up as \"unknown\". Python: psycopg.connect(url, application_name=\"agent:support-bot:mission:triage\")")
 	fmt.Printf("  %sUpstream:%s        %s (%s)\n", colorBold, colorReset, target.Addr(), tlsNote)
 	fmt.Printf("  %sFlags (no YAML):%s DDL · UPDATE/DELETE without WHERE · writes >100 rows · secret-column reads\n", colorBold, colorReset)
+	if opts.Hold != "" {
+		fmt.Printf("  %sApprovals:%s       holding %q for approval (deny after %s). Approve at %s/api/holds\n", colorBold, colorReset, opts.Hold, holdTimeout(policyEngine), uiURL)
+	}
 	fmt.Println()
 	if opts.Demo && opts.DemoAgent {
 		fmt.Println("  Demo agents 'support-bot' and 'analytics-agent' are querying through FaultWall now.")
