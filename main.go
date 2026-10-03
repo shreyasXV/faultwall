@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -334,13 +333,13 @@ func main() {
 		log.Fatal("DATABASE_URL environment variable is required")
 	}
 
-	// Default to sslmode=prefer if not specified (works for both local dev and cloud)
-	if !strings.Contains(dbURL, "sslmode=") {
-		sep := "?"
-		if strings.Contains(dbURL, "?") {
-			sep = "&"
-		}
-		dbURL += sep + "sslmode=prefer"
+	// lib/pq does not support libpq's sslmode=prefer/allow (or libpq's
+	// "prefer" default when sslmode is absent) and fails with
+	// `pq: unsupported sslmode "prefer"`. Resolve them like libpq would:
+	// TLS ("require") if the server offers it, else "disable".
+	if norm := normalizeLibPQSSLMode(dbURL); norm != dbURL {
+		log.Printf("ℹ️  sslmode %q → %q (lib/pq has no prefer/allow)", sslModeOf(dbURL), sslModeOf(norm))
+		dbURL = norm
 	}
 
 	port := os.Getenv("PORT")

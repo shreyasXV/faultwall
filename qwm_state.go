@@ -223,6 +223,8 @@ func monitoringDSNFromUpstream(upstreamAddr string) (string, bool) {
 // openMonitoringDB opens (but does not verify) a small monitoring pool. The
 // caller pings; on failure the sampler simply runs without live state.
 func openMonitoringDB(dsn string) (*sql.DB, error) {
+	// lib/pq rejects sslmode=prefer/allow (libpq's default); resolve them.
+	dsn = normalizeLibPQSSLMode(dsn)
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, err
