@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -44,6 +43,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "try":
+			if err := runTry(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
 		case "agent-url":
 			if err := runAgentURL(os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)
@@ -72,6 +77,7 @@ func main() {
 	proxyListen := ":5433"
 	proxyUpstream := "localhost:5432"
 	proxyPolicies := "./policies.yaml"
+	proxyModeFlag := ""
 	tlsCert := os.Getenv("TLS_CERT_FILE")
 	tlsKey := os.Getenv("TLS_KEY_FILE")
 	upstreamTLS := os.Getenv("UPSTREAM_TLS") == "true"
@@ -104,6 +110,14 @@ func main() {
 			if i+1 < len(os.Args[1:])-0 {
 				tlsKey = os.Args[i+2]
 			}
+		case "--mode":
+			if i+1 < len(os.Args[1:]) {
+				proxyModeFlag = os.Args[i+2]
+			} else {
+				proxyModeFlag = "<missing>"
+			}
+		case "--monitor":
+			proxyModeFlag = "monitor"
 		case "--upstream-tls":
 			upstreamTLS = true
 		case "--upstream-tls-skip-verify":
@@ -127,7 +141,19 @@ func main() {
 	// If DATABASE_URL is set, also start the HTTP dashboard/API server
 	if proxyMode {
 		os.Setenv("POLICY_FILE", proxyPolicies)
-		os.Setenv("POLICY_ENFORCEMENT", "enforce")
+		// Enforcement: --mode/--monitor flag > POLICY_ENFORCEMENT env > enforce.
+		// (Previously hard-coded to enforce, so watch-only proxy mode was impossible.)
+		enforcement, modeWarn, modeErr := resolveProxyEnforcement(proxyModeFlag, os.Getenv("POLICY_ENFORCEMENT"))
+		if modeErr != nil {
+			log.Fatalf("FATAL: %v", modeErr)
+		}
+		if modeWarn != "" {
+			log.Printf("⚠️  %s", modeWarn)
+		}
+		os.Setenv("POLICY_ENFORCEMENT", enforcement)
+		if enforcement == "monitor" {
+			log.Printf("👀 Monitor mode: queries are observed and flagged, never blocked")
+		}
 		policyEngine = NewPolicyEngine()
 		agentTracker = NewAgentTracker()
 		observationStore = NewObservationStore(os.Getenv("OBSERVATION_PATH"))
@@ -307,13 +333,13 @@ func main() {
 		log.Fatal("DATABASE_URL environment variable is required")
 	}
 
-	// Default to sslmode=prefer if not specified (works for both local dev and cloud)
-	if !strings.Contains(dbURL, "sslmode=") {
-		sep := "?"
-		if strings.Contains(dbURL, "?") {
-			sep = "&"
-		}
-		dbURL += sep + "sslmode=prefer"
+	// lib/pq does not support libpq's sslmode=prefer/allow (or libpq's
+	// "prefer" default when sslmode is absent) and fails with
+	// `pq: unsupported sslmode "prefer"`. Resolve them like libpq would:
+	// TLS ("require") if the server offers it, else "disable".
+	if norm := normalizeLibPQSSLMode(dbURL); norm != dbURL {
+		log.Printf("ℹ️  sslmode %q → %q (lib/pq has no prefer/allow)", sslModeOf(dbURL), sslModeOf(norm))
+		dbURL = norm
 	}
 
 	port := os.Getenv("PORT")

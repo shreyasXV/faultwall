@@ -432,6 +432,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 	var inFlightFingerprint string
 	var inFlightUnderLoad float64
 
+	// `faultwall try` live activity feed (nil / no-op outside try mode).
+	tryConn := newTryConnState()
+
 	// Goroutine: relay upstream responses → client with DataRow counting
 	go func() {
 		for {
@@ -461,6 +464,11 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 						return
 					}
 				}
+			}
+
+			// CommandComplete ('C'): affected-row count for the try feed
+			if msgType == 'C' {
+				tryConn.onCommandComplete(payload)
 			}
 
 			// Check query timeout
@@ -507,6 +515,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 	// Track blocked Parse statements by name so we can block their Execute too
 	blockedStmts := make(map[string]bool)
+	// Track allowed prepared statements so repeat Executes (cached prepared
+	// statements: psycopg3, pgx, JDBC) are logged and counted every run.
+	stmts := newStmtTracker()
 
 	for {
 		msgType, payload, err := readWireMessage(client)
@@ -534,6 +545,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			if agentTracker != nil && identity != nil {
 				agentTracker.RecordQuery(identity.AgentID)
 			}
+			tryConn.onSimpleQuery(agentLabel, identity, query, pq, violation)
 
 			if violation != nil && pe.GetEnforcement() == "enforce" {
 				violation.Action = "blocked"
@@ -586,6 +598,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				if agentTracker != nil && identity != nil {
 					agentTracker.RecordQuery(identity.AgentID)
 				}
+				tryConn.onParse(stmtName, query, pq, violation)
 
 				if violation != nil && pe.GetEnforcement() == "enforce" {
 					violation.Action = "blocked"
@@ -593,6 +606,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 					// Track this statement name as blocked
 					blockedStmts[stmtName] = true
+					stmts.close('S', stmtName)
 
 					// Don't forward Parse — drain remaining messages until Sync,
 					// then send ErrorResponse + ReadyForQuery
@@ -619,13 +633,15 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					emitTelemetryFor("allowed", "allow", nil, pq, decisionLatencyMs)
 				}
 				recordObservation(agentLabel, identity, query, pq, false)
+				stmts.parse(stmtName, query, pq, violation)
 			}
 		}
 
 		// Extended query protocol: type 'B' (Bind)
 		// Check if this Bind references a blocked statement
 		if msgType == 'B' && len(payload) > 2 {
-			_, stmtName := extractBindNames(payload)
+			portalName, stmtName := extractBindNames(payload)
+			tryConn.onBind(portalName, stmtName)
 			if blockedStmts[stmtName] {
 				// Skip this Bind — drain until Sync and send error
 				drainUntilSync(client)
@@ -634,6 +650,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				clientWriteMu.Unlock()
 				continue
 			}
+			stmts.bind(portalName, stmtName)
 		}
 
 		// Extended query protocol: type 'E' (Execute)
@@ -646,6 +663,14 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				sendGenericBlockedResponse(client, "Statement was blocked by FaultWall policy")
 				clientWriteMu.Unlock()
 				continue
+			}
+			tryConn.onExecute(agentLabel, identity, portalName)
+			if st, repeat := stmts.execute(portalName); repeat {
+				accountRepeatExecute(pe, st, agentLabel, identity)
+				if st.violation == nil && st.pq != nil {
+					inFlightFingerprint = st.pq.Fingerprint
+					inFlightUnderLoad = currentUtilization()
+				}
 			}
 		}
 
@@ -685,6 +710,8 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		if msgType == 'C' && len(payload) > 2 {
 			closeType := payload[0]
 			name := extractNullTerminated(payload, 1)
+			tryConn.onClose(closeType, name)
+			stmts.close(closeType, name)
 			if closeType == 'S' {
 				delete(blockedStmts, name)
 			} else if closeType == 'P' {
