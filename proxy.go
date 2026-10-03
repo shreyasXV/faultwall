@@ -288,8 +288,20 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 		defer proxyBackendRegistry.Deregister(upstreamPID)
 	}
 
-	// 6. Main proxy loop
-	proxyQueryLoop(client, upstream, identity, agentLabel, pe)
+	// 6. Main proxy loop. Key-authenticated sessions are registered so that
+	// revoking the agent's key on the control plane also ends them.
+	var killCh chan string
+	if keyAuthed && identity != nil {
+		killCh = make(chan string, 1)
+		unregister := agentSessions.Register(identity.AgentID, func(msg string) {
+			select {
+			case killCh <- msg:
+			default:
+			}
+		})
+		defer unregister()
+	}
+	proxyQueryLoop(client, upstream, identity, agentLabel, pe, killCh)
 }
 
 // readStartupMessage reads a PostgreSQL startup message (no type byte).
@@ -436,8 +448,25 @@ func writeWireMessage(w io.Writer, msgType byte, payload []byte) error {
 }
 
 // proxyQueryLoop is the main loop: reads client messages, inspects queries, forwards or blocks.
-func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLabel string, pe *PolicyEngine) {
+func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLabel string, pe *PolicyEngine, killCh <-chan string) {
 	var clientWriteMu sync.Mutex
+
+	// Revoked-key kill switch: FATAL to the client, then close both sides.
+	loopDone := make(chan struct{})
+	defer close(loopDone)
+	if killCh != nil {
+		go func() {
+			select {
+			case msg := <-killCh:
+				clientWriteMu.Lock()
+				_, _ = client.Write(fatalRevokedMessage(msg))
+				clientWriteMu.Unlock()
+				client.Close()
+				upstream.Close()
+			case <-loopDone:
+			}
+		}()
+	}
 
 	// REAL-F2: per-connection search_path. proxyQueryLoop is one goroutine
 	// per client connection — the right scope. We watch every Q/Parse for a

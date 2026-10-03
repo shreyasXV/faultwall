@@ -313,6 +313,9 @@ func (ps *PolicySyncer) apply(r *policySyncResponse) (bool, error) {
 		return false, err
 	}
 	ps.keys.Replace(r.AgentKeys)
+	if n := agentSessions.KillRevoked(ps.keys); n > 0 {
+		log.Printf("🔑 Ended %d open session(s) of agents whose key was revoked", n)
+	}
 	if ps.pe != nil {
 		ps.pe.SetManaged(m)
 	}
