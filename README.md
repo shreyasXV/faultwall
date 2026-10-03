@@ -269,6 +269,12 @@ agent:<agent_id>:mission:<mission_id>
 
 This is set in the connection string — no code changes beyond the connection config. FaultWall reads it from the startup packet at connect time.
 
+### Per-agent keys (managed from the control plane)
+
+Agents created on the control plane's Agents page get their own key. The agent connects with `postgresql://<agent-name>:<key>@<proxy>/<db>`, and the proxy logs in to Postgres with its own credentials (`FW_UPSTREAM_USER` / `FW_UPSTREAM_PASSWORD`), so the agent never holds the real database password.
+
+The agent authenticates to the proxy with **SCRAM-SHA-256**, the same challenge-response Postgres uses: the key is never sent over the wire, and neither the control plane nor the proxy stores it (only a salted SCRAM verifier). Any driver that supports `password_encryption=scram-sha-256` works unchanged (psql, psycopg 2/3, pgx, asyncpg, node-pg, JDBC). A wrong or revoked key is refused with `28P01` before any upstream connection is opened. Keys created before SCRAM support are refused until re-created, unless you set `FW_ALLOW_CLEARTEXT_KEY=1` on the proxy.
+
 ### What Gets Checked
 
 | Check | Example |
