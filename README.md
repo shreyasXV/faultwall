@@ -110,6 +110,16 @@ and opens a live view of every query, per agent, with what FaultWall *would* hav
 Already installed? `faultwall try [postgres://…]`. With Docker:
 `docker run --rm -it -p 5433:5433 -p 8080:8080 ghcr.io/shreyasxv/faultwall try "postgres://user:pass@host.docker.internal:5432/db"`.
 
+**Name your agent.** Keep `application_name=agent:<name>:mission:<task>` on whatever connection string your agent uses, or its queries show up as `unknown`. Most drivers take it as a URL param or a keyword:
+
+```python
+psycopg.connect(url, application_name="agent:support-bot:mission:triage")            # psycopg 3 / psycopg2
+create_engine(url, connect_args={"application_name": "agent:support-bot:mission:triage"})  # SQLAlchemy
+await asyncpg.connect(url, server_settings={"application_name": "agent:support-bot:mission:triage"})
+```
+
+Tested through `faultwall try` with psql, pgx, psycopg 3 (simple, prepared, pipeline, async, COPY), psycopg2, SQLAlchemy, asyncpg and node-pg.
+
 When you're ready to block, write a policy (below) and run in proxy mode.
 
 ## Quick Start (5 minutes)

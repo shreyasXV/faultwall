@@ -195,3 +195,22 @@ func TestAgentConnString(t *testing.T) {
 		t.Errorf("defaults: %+v", d)
 	}
 }
+
+func TestTryUnnamedAgentIsMarked(t *testing.T) {
+	prev := tryActivity
+	tryActivity = NewTryActivityStore(10)
+	defer func() { tryActivity = prev }()
+	q := "UPDATE orders SET status='x' WHERE id = 1"
+	tryRecordQuery("unknown", nil, q, ParseQuery(q), nil)
+	tryRecordQuery("unknown", nil, q, ParseQuery(q), nil)
+	tryRecordQuery("support-bot/triage", &AgentIdentity{AgentID: "support-bot", MissionID: "triage"}, q, ParseQuery(q), nil)
+	_, agents, total, _ := tryActivity.Snapshot(0)
+	if total != 3 || len(agents) != 2 {
+		t.Fatalf("total=%d agents=%d", total, len(agents))
+	}
+	for _, a := range agents {
+		if want := a.Agent == "unknown"; a.Unnamed != want {
+			t.Errorf("agent %q unnamed=%v want %v", a.Agent, a.Unnamed, want)
+		}
+	}
+}

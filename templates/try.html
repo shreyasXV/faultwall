@@ -21,6 +21,9 @@
   .conn code { flex:1; font:13px ui-monospace,SFMono-Regular,Menlo,monospace; background:#0d111a; padding:8px 10px; border-radius:6px; border:1px solid var(--line); overflow-x:auto; white-space:nowrap; }
   button { background:var(--acc); color:#08101f; border:0; border-radius:6px; padding:8px 12px; font-weight:600; cursor:pointer; }
   .rules { color:var(--dim); font-size:12px; margin-top:8px; }
+  .namehint { color:var(--dim); font-size:12px; margin-top:6px; }
+  .namehint code, .unnamed code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--acc); }
+  .unnamed { display:none; background:rgba(245,165,36,.08); border:1px solid rgba(245,165,36,.4); color:var(--warn); border-radius:10px; padding:10px 14px; margin-bottom:16px; font-size:13px; }
   .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:16px; }
   .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
   .stat b { display:block; font-size:26px; }
@@ -62,8 +65,10 @@
   <div class="conn">
     <label>Give your agent this connection string</label>
     <div class="row"><code id="agenturl">…</code><button id="copy">Copy</button></div>
+    <div class="namehint">Using your own connection string? Keep <code>application_name=agent:&lt;name&gt;:mission:&lt;task&gt;</code> on it so every query is tied to the agent that ran it.</div>
     <div class="rules" id="rules"></div>
   </div>
+  <div class="unnamed" id="unnamed"></div>
   <div class="stats">
     <div class="stat"><b id="s-total">0</b><span>queries observed</span></div>
     <div class="stat"><b id="s-flag" style="color:var(--warn)">0</b><span>would have been flagged</span></div>
@@ -115,6 +120,11 @@ function render() {
 function renderAgents(agents) {
   if (!agents.length) return;
   agents.sort((a,b) => b.queries - a.queries);
+  const un = agents.filter(a => a.unnamed).map(a => a.agent);
+  $('unnamed').style.display = un.length ? 'block' : 'none';
+  if (un.length) $('unnamed').innerHTML = '⚠ Queries from <b>' + un.map(esc).join(', ') + '</b> have no agent name. Add '+
+    '<code>application_name=agent:&lt;name&gt;:mission:&lt;task&gt;</code> to that connection string '+
+    '(Python: <code>psycopg.connect(url, application_name="agent:support-bot:mission:triage")</code>) and reconnect.';
   $('agents').innerHTML = agents.map(a => {
     const ops = Object.entries(a.ops).sort((x,y)=>y[1]-x[1]).map(([k,v])=>k+' '+v).join(' · ');
     return `<div class="agent ${a.agent===selAgent?'sel':''}" data-a="${esc(a.agent)}"><div class="n">${esc(a.agent)}</div>`+

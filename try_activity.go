@@ -14,6 +14,7 @@ package main
 // both no-ops unless tryActivity is non-nil (i.e. `faultwall try` is running).
 
 import (
+	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,9 @@ type TryAgentStats struct {
 	Flagged  int64          `json:"flagged"`
 	Ops      map[string]int `json:"ops"`
 	LastSeen time.Time      `json:"last_seen"`
+	// Unnamed is true when the agent connected without
+	// application_name=agent:<name>:… (the label is a fallback like "unknown").
+	Unnamed bool `json:"unnamed"`
 }
 
 // TryActivityStore is a bounded ring of recent events plus per-agent stats.
@@ -58,6 +62,8 @@ type TryActivityStore struct {
 	events []*TryEvent
 	agents map[string]*TryAgentStats
 	onFlag func(ev *TryEvent, newFlags []string)
+	// unnamedSeen: labels that connected without an agent:<name> identity.
+	unnamedSeen map[string]bool
 }
 
 func NewTryActivityStore(max int) *TryActivityStore {
@@ -329,6 +335,7 @@ func (s *TryActivityStore) Snapshot(since int64) ([]TryEvent, []TryAgentStats, i
 	var total, flagged int64
 	for _, st := range s.agents {
 		cp := *st
+		cp.Unnamed = s.unnamedSeen[st.Agent]
 		cp.Ops = map[string]int{}
 		for k, v := range st.Ops {
 			cp.Ops[k] = v
@@ -348,8 +355,30 @@ func tryRecordQuery(agentLabel string, identity *AgentIdentity, query string, pq
 	agent, mission := agentLabel, ""
 	if identity != nil {
 		agent, mission = identity.AgentID, identity.MissionID
+	} else {
+		tryActivity.noteUnnamed(agentLabel)
 	}
 	return tryActivity.Record(agent, mission, query, pq, v)
+}
+
+// noteUnnamed marks agent as unidentified and, the first time it is seen,
+// prints how to name it. Without a name the See feed reads "unknown ran
+// 3 UPDATEs", which is the one thing the live view must not say.
+func (s *TryActivityStore) noteUnnamed(agent string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	first := !s.unnamedSeen[agent]
+	if s.unnamedSeen == nil {
+		s.unnamedSeen = map[string]bool{}
+	}
+	s.unnamedSeen[agent] = true
+	s.mu.Unlock()
+	if first {
+		log.Printf("%s%s[NAME YOUR AGENT]%s a connection arrived as %q. Add application_name=agent:<name>:mission:<task> to its connection string so the feed shows who ran what.",
+			colorYellow, colorBold, colorReset, agent)
+	}
 }
 
 // tryRecordCommandComplete is the proxy hook for upstream CommandComplete.

@@ -364,6 +364,9 @@ func startDemoPostgres() (*demoDB, error) {
 		Version(embeddedpostgres.V16).
 		Port(uint32(port)).
 		Username("postgres").Password(pw).Database("demo").
+		// UTF8, not the SQL_ASCII initdb default: SQLAlchemy and other
+		// drivers that read server_encoding fail on SQL_ASCII.
+		Encoding("UTF8").Locale("C").
 		RuntimePath(filepath.Join(base, "pg-runtime")).
 		CachePath(filepath.Join(home, ".faultwall", "cache")).
 		StartTimeout(60 * time.Second).
@@ -748,6 +751,8 @@ func runTry(args []string) error {
 	fmt.Println()
 	fmt.Printf("  %sLive activity:%s   %s\n", colorBold, colorReset, uiURL)
 	fmt.Printf("  %sGive your agent:%s %s\n", colorBold, colorReset, agentURL)
+	fmt.Printf("  %sName your agent:%s  keep %sapplication_name=agent:<name>:mission:<task>%s on whatever connection string\n", colorBold, colorReset, colorCyan, colorReset)
+	fmt.Println("                    you use, or its queries show up as \"unknown\". Python: psycopg.connect(url, application_name=\"agent:support-bot:mission:triage\")")
 	fmt.Printf("  %sUpstream:%s        %s (%s)\n", colorBold, colorReset, target.Addr(), tlsNote)
 	fmt.Printf("  %sFlags (no YAML):%s DDL · UPDATE/DELETE without WHERE · writes >100 rows · secret-column reads\n", colorBold, colorReset)
 	fmt.Println()
