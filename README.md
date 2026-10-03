@@ -86,6 +86,30 @@ POLICY_FILE=./policies.yaml \
 
 ---
 
+## Try it in 60 seconds (one command, no YAML)
+
+```bash
+# Demo: bundled Postgres + two scripted agents, live view at http://localhost:8080
+curl -fsSL https://app.faultwall.com/try.sh | bash
+
+# Your database (monitor mode: observes and flags, never blocks)
+curl -fsSL https://app.faultwall.com/try.sh | bash -s -- "postgres://user:pass@host:5432/db"
+```
+
+It prints a connection string to give your agent (`postgres://…@localhost:5433/db?application_name=agent:my-agent:mission:default`)
+and opens a live view of every query, per agent, with what FaultWall *would* have flagged:
+
+- DDL / DCL (`CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `GRANT`…)
+- `UPDATE` / `DELETE` with no `WHERE` clause
+- writes that touch more than 100 rows
+- reads of secret-looking columns (`password`, `token`, `secret`, `ssn`, `api_key`…)
+- dangerous server functions (`pg_read_file`, `dblink`, `lo_export`…)
+
+Already installed? `faultwall try [postgres://…]`. With Docker:
+`docker run --rm -it -p 5433:5433 -p 8080:8080 ghcr.io/shreyasxv/faultwall try "postgres://user:pass@host.docker.internal:5432/db"`.
+
+When you're ready to block, write a policy (below) and run in proxy mode.
+
 ## Quick Start (5 minutes)
 
 ### Step 1: Install
