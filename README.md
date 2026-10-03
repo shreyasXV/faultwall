@@ -275,6 +275,10 @@ Agents created on the control plane's Agents page get their own key. The agent c
 
 The agent authenticates to the proxy with **SCRAM-SHA-256**, the same challenge-response Postgres uses: the key is never sent over the wire, and neither the control plane nor the proxy stores it (only a salted SCRAM verifier). Any driver that supports `password_encryption=scram-sha-256` works unchanged (psql, psycopg 2/3, pgx, asyncpg, node-pg, JDBC). A wrong or revoked key is refused with `28P01` before any upstream connection is opened. Keys created before SCRAM support are refused until re-created, unless you set `FW_ALLOW_CLEARTEXT_KEY=1` on the proxy.
 
+Revoking a key on the Agents page also ends that agent's open sessions on the proxy's next sync (FATAL `agent key revoked`), not just new connections.
+
+**Per-agent database role (`db_role`).** On the Agents page you can give an agent a Postgres role. Right after the proxy logs in upstream, and before the agent can send anything, the proxy runs `SET SESSION ROLE "<db_role>"`. From then on Postgres enforces that role's grants itself: with a SELECT-only role, an `UPDATE` fails with Postgres' own `42501 permission denied`, even if a FaultWall rule were wrong. The agent can't switch back. `SET ROLE`, `RESET ROLE`, `SET SESSION AUTHORIZATION`, `RESET ALL`, `DISCARD ALL` and `set_config('role', ...)` are refused with `42501 [BLOCKED by FaultWall] agent role is fixed`, over both the simple and extended protocol, and the connection stays open. If the role doesn't exist or isn't granted to the proxy's login, the connection gets a FATAL that says so. Changing or clearing an agent's role ends its open sessions, so reconnects pick up the new role. Leave `db_role` empty for "ask first" agents: an approved write still needs write grants. See [Make the proxy the only path to the database](#make-the-proxy-the-only-path-to-the-database) for the SQL.
+
 ### What Gets Checked
 
 | Check | Example |
@@ -483,6 +487,56 @@ FaultWall exposes an MCP server so AI agents can self-monitor:
 10 tools: `list_tenants`, `get_tenant`, `get_noisy_tenants`, `get_costs`, `throttle_tenant`, `get_health`, `get_anomalies`, `get_predictions`, and more.
 
 ---
+
+## Make the proxy the only path to the database
+
+FaultWall can only enforce what goes through it. **If an agent has any other route to the database, it bypasses FaultWall.** After installing, close the other routes:
+
+**1. Rotate the database password so only the proxy knows it.** Whatever password your agents (or their config, CI secrets, `.env` files) used before is now a way around the proxy. Set a new one and give it to the proxy only:
+
+```sql
+-- as an admin, on the real database
+ALTER ROLE faultwall_proxy WITH PASSWORD 'a-new-long-random-password';
+```
+
+```bash
+# on the FaultWall host only
+FW_UPSTREAM_USER=faultwall_proxy FW_UPSTREAM_PASSWORD='a-new-long-random-password' faultwall --proxy ...
+```
+
+Agents connect with their FaultWall agent key (`postgresql://<agent>:<fw_ak_...>@<proxy>/<db>`), which Postgres rejects if it's tried directly. If agents used to share an application login, rotate that one too, or `ALTER ROLE ... NOLOGIN` it.
+
+**2. Allow network access to the database from the proxy host only.**
+
+- **Cloud (RDS, Cloud SQL, Azure, Supabase, Neon):** restrict the database's security group / authorized networks / firewall to the FaultWall host's address (or its security group). Remove `0.0.0.0/0` and any agent subnets.
+- **Self-managed:** in `pg_hba.conf`, accept the proxy's address and reject the rest, then reload:
+
+  ```
+  # TYPE  DATABASE  USER             ADDRESS          METHOD
+  host    all       faultwall_proxy  10.0.1.20/32     scram-sha-256   # FaultWall host
+  host    all       all              0.0.0.0/0        reject
+  host    all       all              ::/0             reject
+  ```
+
+  Keep any admin or migration access on separate, named rules that agents can't use.
+
+The proxy logs a startup hint about DB-port reachability (F9), and REAL-F9 flags sessions that reach the DB without going through it. These are hints, not proof. Verify the network rules yourself.
+
+**3. Give read-only agents a read-only database role.** With a role set, Postgres rejects the agent's writes on its own, independent of FaultWall's rules. Create one NOLOGIN role per agent (or per access level), grant it only what the agent needs, and grant the role to the proxy's login so the proxy can switch to it:
+
+```sql
+-- read-only role for one agent
+CREATE ROLE fw_ro_support_agent NOLOGIN;
+GRANT USAGE ON SCHEMA public TO fw_ro_support_agent;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO fw_ro_support_agent;
+-- tables created later (run as the role that creates them)
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO fw_ro_support_agent;
+
+-- let the proxy's login switch to it
+GRANT fw_ro_support_agent TO faultwall_proxy;
+```
+
+Then set the agent's **Database role** to `fw_ro_support_agent` on the Agents page. The page suggests `fw_ro_<agent>` when writes are blocked. Narrow the grants further (specific tables or columns instead of `ALL TABLES`) if the agent needs less. Don't do this for "ask first" agents, since approved writes need write grants. Two caveats. Keep the proxy's login (`faultwall_proxy`) a plain role, not a superuser, so the agent's role is the only source of its rights. And `SECURITY DEFINER` functions the role can execute still run with their owner's rights, so review those, or revoke `EXECUTE` from the role.
 
 ## Known Limitations & Hard Requirements
 
