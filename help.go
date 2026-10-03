@@ -25,6 +25,8 @@ Proxy mode flags:
   --listen ADDR              Proxy listen address (default :5433)
   --upstream ADDR            Real Postgres address (default localhost:5432)
   --policies FILE            Policy YAML (default ./policies.yaml)
+  --mode enforce|monitor     enforce blocks (default); monitor observes + flags,
+                             never blocks (also: --monitor, POLICY_ENFORCEMENT)
   --tls-cert FILE            Client-facing TLS cert
   --tls-key FILE             Client-facing TLS key
   --upstream-tls             Connect upstream using TLS

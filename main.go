@@ -78,6 +78,7 @@ func main() {
 	proxyListen := ":5433"
 	proxyUpstream := "localhost:5432"
 	proxyPolicies := "./policies.yaml"
+	proxyModeFlag := ""
 	tlsCert := os.Getenv("TLS_CERT_FILE")
 	tlsKey := os.Getenv("TLS_KEY_FILE")
 	upstreamTLS := os.Getenv("UPSTREAM_TLS") == "true"
@@ -110,6 +111,14 @@ func main() {
 			if i+1 < len(os.Args[1:])-0 {
 				tlsKey = os.Args[i+2]
 			}
+		case "--mode":
+			if i+1 < len(os.Args[1:]) {
+				proxyModeFlag = os.Args[i+2]
+			} else {
+				proxyModeFlag = "<missing>"
+			}
+		case "--monitor":
+			proxyModeFlag = "monitor"
 		case "--upstream-tls":
 			upstreamTLS = true
 		case "--upstream-tls-skip-verify":
@@ -133,7 +142,19 @@ func main() {
 	// If DATABASE_URL is set, also start the HTTP dashboard/API server
 	if proxyMode {
 		os.Setenv("POLICY_FILE", proxyPolicies)
-		os.Setenv("POLICY_ENFORCEMENT", "enforce")
+		// Enforcement: --mode/--monitor flag > POLICY_ENFORCEMENT env > enforce.
+		// (Previously hard-coded to enforce, so watch-only proxy mode was impossible.)
+		enforcement, modeWarn, modeErr := resolveProxyEnforcement(proxyModeFlag, os.Getenv("POLICY_ENFORCEMENT"))
+		if modeErr != nil {
+			log.Fatalf("FATAL: %v", modeErr)
+		}
+		if modeWarn != "" {
+			log.Printf("⚠️  %s", modeWarn)
+		}
+		os.Setenv("POLICY_ENFORCEMENT", enforcement)
+		if enforcement == "monitor" {
+			log.Printf("👀 Monitor mode: queries are observed and flagged, never blocked")
+		}
 		policyEngine = NewPolicyEngine()
 		agentTracker = NewAgentTracker()
 		observationStore = NewObservationStore(os.Getenv("OBSERVATION_PATH"))

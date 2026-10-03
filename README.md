@@ -69,6 +69,8 @@ FaultWall sits between your agent and PostgreSQL as an inline L7 proxy. Every SQ
 
 Agents connect to port 5433 instead of 5432. That's the only change.
 
+Watch-only first? Add `--mode monitor` (or set `POLICY_ENFORCEMENT=monitor`): same parsing and logging, violations are recorded as `monitored`, nothing is blocked.
+
 ### 📊 Monitor Mode (Sidecar)
 
 FaultWall connects to your database as a read-only sidecar, polls `pg_stat_activity`, and logs violations. Good for visibility without being in the data path.
@@ -423,6 +425,7 @@ The existing `blocked_operations` field still works. If an agent has no `profile
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--proxy` | — | Enable proxy mode |
+| `--mode enforce\|monitor` | `enforce` | `monitor` (or `--monitor`, or `POLICY_ENFORCEMENT=monitor`) observes and flags, never blocks. Flag beats env. |
 | `--listen` | `:5433` | Proxy listen address |
 | `--upstream` | `localhost:5432` | Upstream PostgreSQL address |
 | `--policies` | `./policies.yaml` | Policy file path |
