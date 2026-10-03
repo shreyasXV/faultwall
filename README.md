@@ -428,6 +428,41 @@ The existing `blocked_operations` field still works. If an agent has no `profile
 
 ---
 
+## Privacy: what leaves your box (control-plane telemetry)
+
+Telemetry is **off** unless the proxy is enrolled to a control plane (`install.sh --token ...` writes `~/.faultwall/config.toml`, or set `FAULTWALL_CONTROL_PLANE_URL` + `FAULTWALL_CONTROL_PLANE_TOKEN`). Turn it all off with `FAULTWALL_TELEMETRY=false` or `telemetry_enabled = false`.
+
+When enrolled, each statement sends one event:
+
+| Field | Example | Notes |
+|-------|---------|-------|
+| `agent_id`, `mission` | `support-agent`, `refunds` | from `application_name=agent:<id>:mission:<m>`. The `:token:` part is never sent. Connections without a name are sent as their raw application_name (or `unknown`) with `agent_unnamed: true`. |
+| `op_type`, `table_name`, `tables` | `UPDATE`, `orders` | names only |
+| `rows_affected` | `12` | count from the CommandComplete tag. No row data. |
+| `decision`, `flags`, `reasons` | `allow`, `["mass_write"]` | zero-config rules: DDL, UPDATE/DELETE without WHERE, writes over 100 rows, secret-column reads, dangerous server functions, policy violations |
+| `fingerprint` | `a1b2c3...` | pg_query structural hash. Literals don't change it. |
+| `latency_ms`, `risk_score` | `0.4`, `0.12` | decision latency, QWM score |
+| **`query_shape`** | `UPDATE orders SET status = ? WHERE id = ?` | **gated, see below** |
+
+**Never sent:** raw query text, bound parameter values, literals, comments, row data, policy bodies, connection credentials.
+
+### Query shapes (`FW_TELEMETRY_QUERY_SHAPE`)
+
+`query_shape` is the statement with **every** literal replaced by `?` (strings, dollar-quoted bodies, numbers, booleans, `$n` params, `E''`/`U&''`/bit/hex constants) and every comment removed. It is built from the Postgres scanner's token stream (pg_query), not regexes. If a statement can't be tokenized, or anything quote-like survives, the shape is dropped and only the metadata above is sent. It is what makes the hosted feed say *"support-agent ran `UPDATE orders SET status = ? WHERE id = ?` (12 rows)"* instead of *"UPDATE on orders"*.
+
+| Setting | Effect |
+|---------|--------|
+| *(unset)* | **on** when enrolled (`telemetryQueryShapeDefault` in `telemetry_client.go`) |
+| `FW_TELEMETRY_QUERY_SHAPE=off` (or `false`/`0`) | never send shapes |
+| `FW_TELEMETRY_QUERY_SHAPE=on` | send shapes |
+| `query_shape = false` in `[control_plane]` | same as off; the env var wins |
+
+Identifiers stay in the shape: table, column and function names. If your schema names are themselves sensitive, set `FW_TELEMETRY_QUERY_SHAPE=off`.
+
+Delivery: events are batched (200 per batch, every 2s) on a background goroutine. If the control plane is unreachable they are retried with exponential backoff (1s up to 60s, jittered), and up to 10,000 events are held in memory. Emitting never blocks a query; if the buffer is full the event is dropped.
+
+---
+
 ## Configuration
 
 ### Proxy Mode
