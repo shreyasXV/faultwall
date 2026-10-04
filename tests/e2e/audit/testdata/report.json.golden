@@ -1,0 +1,426 @@
+{
+  "schema_version": 1,
+  "tool": "faultwall audit",
+  "faultwall_version": "test",
+  "generated_at": "2026-10-04T00:00:00Z",
+  "target": {
+    "host": "db.internal",
+    "port": "5432",
+    "database": "shop",
+    "server_version": "16.4",
+    "connected_as": "app_user"
+  },
+  "role": {
+    "name": "app_user",
+    "superuser": false,
+    "bypass_rls": false,
+    "create_role": false,
+    "create_db": false,
+    "replication": false,
+    "can_login": true,
+    "member_of": [
+      "readers"
+    ],
+    "elevated_via": [],
+    "predefined_roles": {
+      "pg_execute_server_program": false,
+      "pg_read_all_data": false,
+      "pg_read_server_files": false,
+      "pg_signal_backend": false,
+      "pg_write_all_data": false,
+      "pg_write_server_files": false
+    }
+  },
+  "summary": {
+    "tables": 6,
+    "select": 6,
+    "insert": 4,
+    "update": 4,
+    "delete": 4,
+    "truncate": 4,
+    "references": 4,
+    "trigger": 4,
+    "owned": 4,
+    "views": 2,
+    "views_readable": 2,
+    "secret_columns_readable": 2,
+    "sensitive_views_readable": 1,
+    "dangerous_functions_executable": 2,
+    "rls_tables": 1,
+    "rls_applies_to_role": 0,
+    "schemas_with_create": 1,
+    "tables_granted_to_public": 0
+  },
+  "findings": [
+    {
+      "id": "delete",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "DELETE on 4 of 6 tables."
+    },
+    {
+      "id": "update",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "UPDATE on 4 of 6 tables."
+    },
+    {
+      "id": "insert",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "INSERT on 4 of 6 tables."
+    },
+    {
+      "id": "truncate",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "TRUNCATE on 4 of 6 tables: public.users, public.orders, public.tickets, public.Weird \"Name\"."
+    },
+    {
+      "id": "owner",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "Owns 4 of 6 tables, so it can ALTER or DROP them and change their grants."
+    },
+    {
+      "id": "trigger",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "TRIGGER on 4 tables: it can attach code that runs on other users' writes."
+    },
+    {
+      "id": "rls_not_applied",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "RLS is on for 1 table but does not apply to app_user on 1: public.tickets (owner)."
+    },
+    {
+      "id": "secret_columns",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "Can SELECT 2 secret-looking columns: public.users.password_hash, public.Weird \"Name\".api_token."
+    },
+    {
+      "id": "sensitive_views",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "Can read 1 view that reads secret-looking columns: public.user_logins (reads public.users.password_hash). Mark these sensitive too."
+    },
+    {
+      "id": "dangerous_functions",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "Can EXECUTE 2 dangerous functions: dblink*, pg_terminate_backend."
+    },
+    {
+      "id": "extensions",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "Extensions that reach outside the database are installed: dblink."
+    },
+    {
+      "id": "schema_create",
+      "enforced_by": "postgres",
+      "label": "enforced by Postgres",
+      "text": "Can CREATE objects (tables, functions) in schema public."
+    },
+    {
+      "id": "no_where",
+      "enforced_by": "faultwall",
+      "label": "enforced by Faultwall",
+      "text": "Writes without a WHERE clause: app_user can UPDATE or DELETE every row of 4 tables in one statement. A grant can't require a WHERE."
+    },
+    {
+      "id": "row_cap",
+      "enforced_by": "faultwall",
+      "label": "enforced by Faultwall",
+      "text": "Row-count caps: Postgres has no per-statement limit on rows read or changed."
+    },
+    {
+      "id": "approval",
+      "enforced_by": "faultwall",
+      "label": "enforced by Faultwall",
+      "text": "Approval before a write: Postgres can't pause a statement until a person approves it."
+    },
+    {
+      "id": "agent_identity",
+      "enforced_by": "faultwall",
+      "label": "enforced by Faultwall",
+      "text": "Per-agent identity on a shared login: every agent that connects as app_user looks the same to Postgres. 3 sessions are open as app_user right now (1 application_name value)."
+    },
+    {
+      "id": "query_shape",
+      "enforced_by": "faultwall",
+      "label": "enforced by Faultwall",
+      "text": "Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one."
+    }
+  ],
+  "database": {
+    "connect": false,
+    "create": false,
+    "temp": false
+  },
+  "schemas": [
+    {
+      "name": "public",
+      "owner": "postgres",
+      "usage": true,
+      "create": true,
+      "owned_by_role": false,
+      "public_create": false
+    }
+  ],
+  "tables": [
+    {
+      "schema": "public",
+      "name": "users",
+      "kind": "table",
+      "owner": "app_user",
+      "owned_by_role": true,
+      "schema_usage": true,
+      "privileges": {
+        "select": true,
+        "insert": true,
+        "update": true,
+        "delete": true,
+        "truncate": true,
+        "references": true,
+        "trigger": true
+      },
+      "select_any_column": true,
+      "rls_enabled": false,
+      "rls_forced": false,
+      "rls_policies": 0,
+      "rls_applies_to_role": false,
+      "public_privileges": [],
+      "secret_columns": [
+        "password_hash"
+      ]
+    },
+    {
+      "schema": "public",
+      "name": "orders",
+      "kind": "table",
+      "owner": "app_user",
+      "owned_by_role": true,
+      "schema_usage": true,
+      "privileges": {
+        "select": true,
+        "insert": true,
+        "update": true,
+        "delete": true,
+        "truncate": true,
+        "references": true,
+        "trigger": true
+      },
+      "select_any_column": true,
+      "rls_enabled": false,
+      "rls_forced": false,
+      "rls_policies": 0,
+      "rls_applies_to_role": false,
+      "public_privileges": [],
+      "secret_columns": []
+    },
+    {
+      "schema": "public",
+      "name": "tickets",
+      "kind": "table",
+      "owner": "app_user",
+      "owned_by_role": true,
+      "schema_usage": true,
+      "privileges": {
+        "select": true,
+        "insert": true,
+        "update": true,
+        "delete": true,
+        "truncate": true,
+        "references": true,
+        "trigger": true
+      },
+      "select_any_column": true,
+      "rls_enabled": true,
+      "rls_forced": false,
+      "rls_policies": 1,
+      "rls_applies_to_role": false,
+      "public_privileges": [],
+      "secret_columns": []
+    },
+    {
+      "schema": "public",
+      "name": "ledger",
+      "kind": "table",
+      "owner": "admin",
+      "owned_by_role": false,
+      "schema_usage": true,
+      "privileges": {
+        "select": true,
+        "insert": false,
+        "update": false,
+        "delete": false,
+        "truncate": false,
+        "references": false,
+        "trigger": false
+      },
+      "select_any_column": true,
+      "rls_enabled": false,
+      "rls_forced": false,
+      "rls_policies": 0,
+      "rls_applies_to_role": false,
+      "public_privileges": [],
+      "secret_columns": []
+    },
+    {
+      "schema": "public",
+      "name": "Weird \"Name\"",
+      "kind": "table",
+      "owner": "app_user",
+      "owned_by_role": true,
+      "schema_usage": true,
+      "privileges": {
+        "select": true,
+        "insert": true,
+        "update": true,
+        "delete": true,
+        "truncate": true,
+        "references": true,
+        "trigger": true
+      },
+      "select_any_column": true,
+      "rls_enabled": false,
+      "rls_forced": false,
+      "rls_policies": 0,
+      "rls_applies_to_role": false,
+      "public_privileges": [],
+      "secret_columns": [
+        "api_token"
+      ]
+    },
+    {
+      "schema": "public",
+      "name": "audit_log",
+      "kind": "table",
+      "owner": "admin",
+      "owned_by_role": false,
+      "schema_usage": true,
+      "privileges": {
+        "select": false,
+        "insert": false,
+        "update": false,
+        "delete": false,
+        "truncate": false,
+        "references": false,
+        "trigger": false
+      },
+      "select_any_column": true,
+      "rls_enabled": false,
+      "rls_forced": false,
+      "rls_policies": 0,
+      "rls_applies_to_role": false,
+      "public_privileges": [],
+      "secret_columns": [
+        "actor_ssn"
+      ]
+    }
+  ],
+  "views": [
+    {
+      "schema": "public",
+      "name": "user_logins",
+      "kind": "view",
+      "owner": "app_user",
+      "select": true,
+      "select_any_column": true,
+      "reads_secret_columns": [
+        "public.users.password_hash"
+      ]
+    },
+    {
+      "schema": "public",
+      "name": "order_totals",
+      "kind": "view",
+      "owner": "app_user",
+      "select": true,
+      "select_any_column": true,
+      "reads_secret_columns": []
+    }
+  ],
+  "secret_columns": [
+    {
+      "schema": "public",
+      "table": "users",
+      "column": "password_hash",
+      "kind": "table",
+      "select": true,
+      "insert": true,
+      "update": true,
+      "via_table_grant": true
+    },
+    {
+      "schema": "public",
+      "table": "Weird \"Name\"",
+      "column": "api_token",
+      "kind": "table",
+      "select": true,
+      "insert": true,
+      "update": true,
+      "via_table_grant": true
+    },
+    {
+      "schema": "public",
+      "table": "audit_log",
+      "column": "actor_ssn",
+      "kind": "table",
+      "select": false,
+      "insert": false,
+      "update": false,
+      "via_table_grant": false
+    }
+  ],
+  "functions": [
+    {
+      "schema": "pg_catalog",
+      "name": "pg_read_file",
+      "args": "filename text",
+      "execute": false,
+      "granted_to_public": false
+    },
+    {
+      "schema": "public",
+      "name": "dblink",
+      "args": "text",
+      "execute": true,
+      "granted_to_public": true
+    },
+    {
+      "schema": "public",
+      "name": "dblink_exec",
+      "args": "text",
+      "execute": true,
+      "granted_to_public": true
+    },
+    {
+      "schema": "pg_catalog",
+      "name": "pg_terminate_backend",
+      "args": "pid integer, timeout bigint",
+      "execute": true,
+      "granted_to_public": true
+    }
+  ],
+  "server_file_access": {
+    "copy_program": false,
+    "read_server_files": false,
+    "write_server_files": false
+  },
+  "extensions": [
+    {
+      "name": "dblink",
+      "version": "1.2",
+      "schema": "public"
+    }
+  ],
+  "sessions": {
+    "open": 3,
+    "application_names": 1
+  },
+  "cta": "Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read"
+}

@@ -280,7 +280,7 @@ func renderAuditText(rep *AuditReport, all bool) string {
 	if t.ConnectedAs != r.Name {
 		fmt.Fprintf(&b, "Connected as %s, checking role %s.\n", t.ConnectedAs, r.Name)
 	}
-	b.WriteString("Read-only. Nothing was changed and nothing left this machine.\n\n")
+	b.WriteString("Read-only: nothing was changed. No network calls besides this database connection.\n\n")
 
 	// 3-line summary
 	b.WriteString("Summary\n")
