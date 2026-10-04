@@ -1,5 +1,5 @@
-faultwall audit e2e  2026-10-04T08:28:39Z  postgres=127.0.0.1:5544
-git 3de465a
+faultwall audit e2e  2026-10-04T09:39:32Z  postgres=127.0.0.1:5544
+git 9cba4d4
 == build
 server: PostgreSQL 16.13 (Homebrew) on aarch64-apple-darwin25.2.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit
 == fixture
@@ -8,14 +8,14 @@ tables in fixture: 43
 PASS  sandbox blocks outbound network (curl to example.com refused)
 == read-only: schema + grants snapshot before
 == faultwall audit (as fwa_app_user, network off, HTTP proxy vars pointed at a dead port)
-PASS  audit exits 0 with network off + proxy vars set (rc=0, 0.31s)
+PASS  audit exits 0 with network off + proxy vars set (rc=0, 0.49s)
 ----- output -----
 faultwall audit: role fwa_app_user on database fwa_scratch at 127.0.0.1:5544 (PostgreSQL 16.13 (Homebrew))
 Read-only: nothing was changed. No network calls besides this database connection.
 
 Summary
-  fwa_app_user can DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more).
-  Owns 40 (can ALTER/DROP). 1 view reads secret columns. 3 dangerous functions executable (dblink*, pg_cancel_backend, pg_terminate_backend). RLS applies on 0 of 1 RLS tables.
+  fwa_app_user can DELETE on 42 of 43 tables, UPDATE 42, INSERT 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more).
+  Owns 40 (can ALTER/DROP). 1 view reads secret columns. 1 dangerous function executable (dblink*). RLS applies on 0 of 1 RLS tables.
   Superuser: no. Bypasses RLS: no. Create role: no. Create DB: no. Replication: no.
 
 Fixable with Postgres grants (enforced by Postgres)
@@ -28,17 +28,17 @@ Fixable with Postgres grants (enforced by Postgres)
   - RLS is on for 1 table but does not apply to fwa_app_user on 1: public.tenant_notes (owner).
   - Can SELECT 4 secret-looking columns: public.users.password_hash, public.api_tokens.token, public.customers.ssn, billing.invoices.card_token.
   - Can read 1 view that reads secret-looking columns: public.user_logins (reads public.users.password_hash). Mark these sensitive too.
-  - Can EXECUTE 3 dangerous functions: dblink*, pg_cancel_backend, pg_terminate_backend.
+  - Can EXECUTE 1 dangerous function: dblink*.
   - Extensions that reach outside the database are installed: dblink.
   - Can CREATE objects (tables, functions) in schema public.
   Run faultwall audit --fix for SQL that creates a narrower role for one agent.
 
-Still requires Faultwall (enforced by Faultwall, Postgres can't express these)
-  - Writes without a WHERE clause: fwa_app_user can UPDATE or DELETE every row of 42 tables in one statement. A grant can't require a WHERE.
-  - Row-count caps: Postgres has no per-statement limit on rows read or changed.
-  - Approval before a write: Postgres can't pause a statement until a person approves it.
-  - Per-agent identity on a shared login: every agent that connects as fwa_app_user looks the same to Postgres.
-  - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one.
+Not enforced by audit or Postgres grants (what the FaultWall proxy does today, and what is planned)
+  - Writes without a WHERE clause: fwa_app_user can UPDATE or DELETE every row of 42 tables in one statement. A grant can't require a WHERE. FaultWall proxy today, in enforce mode: the standard and strict profiles block UPDATE and DELETE without a WHERE.
+  - Row-count caps: Postgres has no per-statement limit on rows read or changed. FaultWall proxy today: max_rows limits the rows one statement returns. A cap on rows changed is planned, not in this release.
+  - Approval before a write: Postgres can't pause a statement until a person approves it. Planned in the FaultWall app, not in this release: writes that pause until a person approves.
+  - Per-agent identity on a shared login: every agent that connects as fwa_app_user looks the same to Postgres. FaultWall proxy today: each agent is named by application_name, with an optional per-agent auth_token. Per-agent keys are planned in the FaultWall app.
+  - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one. FaultWall proxy today, in enforce mode: block by operation, table, column and function per agent.
 
 Role
   member of: fwa_readers
@@ -77,12 +77,12 @@ Secret-looking columns (4 found, 4 readable)
 Views that read secret-looking columns (1 readable)
   public.user_logins reads public.users.password_hash
 
-Dangerous functions it can EXECUTE (3)
-  dblink*, pg_cancel_backend, pg_terminate_backend
+Dangerous functions it can EXECUTE (1)
+  dblink*
 
-Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read
+Want this for your agent's real traffic? Free 48h read: https://faultwall.com
 ------------------
-PASS  summary: DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42
+PASS  summary: DELETE on 42 of 43 tables, UPDATE 42, INSERT 42, TRUNCATE 42
 PASS  summary: owns 40 (can ALTER/DROP), 1 view reads secret columns
 PASS  summary: superuser/bypass RLS line
 PASS  summary is the first block (3 lines after the header)
@@ -92,10 +92,12 @@ PASS  view over users.password_hash listed
 PASS  RLS on tenant_notes reported as not applied (owner)
 PASS  CREATE in schema public reported
 PASS  membership in fwa_readers shown
-PASS  dblink* reported as executable
+PASS  dblink* reported as executable (own-session signal functions not flagged)
 PASS  dblink extension reported
 PASS  label: enforced by Postgres
-PASS  label: enforced by Faultwall
+PASS  label: not enforced by audit or Postgres grants
+PASS  no claim of Faultwall enforcement in report
+PASS  approval marked planned
 PASS  Faultwall control listed: Writes without a WHERE clause
 PASS  Faultwall control listed: Row-count caps
 PASS  Faultwall control listed: Approval before a write
@@ -126,13 +128,15 @@ PASS  --fix exits 0 (rc=0)
 
 BEGIN;
 
--- 1. The role. NOLOGIN: FaultWall's proxy switches to it (db_role on the Agents page).
---    For an agent that connects to Postgres directly instead, use this line in place of the next one:
+-- 1. The role.
+--    Available now: for an agent that connects to Postgres directly, use this line in place of the next one:
 --    CREATE ROLE fw_agent_e2e LOGIN PASSWORD 'choose-a-long-random-password';
+--    NOLOGIN (below) is for the planned FaultWall app, where the proxy switches to this role for one agent
+--    (Database role on the Agents page). That is not in this release.
 CREATE ROLE fw_agent_e2e NOLOGIN;
 
--- To use it through FaultWall, let the proxy's login switch to it, then set the agent's
--- Database role on the Agents page (or rerun with --proxy-role NAME):
+-- Planned FaultWall app, not in this release: let the proxy's login switch to it, then set the
+-- agent's Database role on the Agents page (or rerun with --proxy-role NAME):
 --    GRANT fw_agent_e2e TO faultwall_proxy;
 
 -- 2. Schema access.
@@ -184,6 +188,8 @@ GRANT SELECT ON public.order_totals TO fw_agent_e2e;
 GRANT SELECT (id, amount) ON billing.invoices TO fw_agent_e2e;  -- leaves out card_token
 GRANT SELECT ON billing.payouts TO fw_agent_e2e;
 GRANT SELECT ON billing.ledger TO fw_agent_e2e;
+-- Note: on the 4 tables granted by column, SELECT * fails for fw_agent_e2e (permission denied).
+-- Agents have to name the columns they need. That is the point: * would include the secret column.
 -- Left out because they read secret-looking columns:
 --    public.user_logins (view reads public.users.password_hash)
 
@@ -195,24 +201,35 @@ GRANT SELECT ON billing.ledger TO fw_agent_e2e;
 
 COMMIT;
 
--- Still requires Faultwall
--- These controls can't be written as Postgres grants (enforced by Faultwall):
---   - Writes without a WHERE clause: fwa_app_user can UPDATE or DELETE every row of 42 tables in one statement. A grant can't require a WHERE.
---   - Row-count caps: Postgres has no per-statement limit on rows read or changed.
---   - Approval before a write: Postgres can't pause a statement until a person approves it.
---   - Per-agent identity on a shared login: every agent that connects as fwa_app_user looks the same to Postgres.
---   - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one.
+-- Still inherited through PUBLIC (affects every role, review with your DBA)
+-- fw_agent_e2e gets these too, because they are granted to PUBLIC, not to any one role.
+-- This script does not change them: it only creates and grants to the new role.
+--   - EXECUTE on public.dblink* (granted to PUBLIC).
+
+-- Not enforced by audit or this generated role
+-- Postgres grants can't express these for fw_agent_e2e. Each line says what the FaultWall proxy does today and what is planned:
+--   - Row-count caps: Postgres can't limit how many rows one SELECT by fw_agent_e2e returns (a full export of every readable table is allowed). FaultWall proxy today: max_rows limits the rows one statement returns. A cap on rows changed is planned, not in this release.
+--   - Approval before a write: if you later grant writes, Postgres can't pause them until a person approves. Planned in the FaultWall app, not in this release: writes that pause until a person approves.
+--   - Per-agent identity: if more than one agent uses fw_agent_e2e, Postgres sees them as the same role. FaultWall proxy today: each agent is named by application_name, with an optional per-agent auth_token. Per-agent keys are planned in the FaultWall app.
+--   - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). FaultWall proxy today, in enforce mode: block by operation, table, column and function per agent.
 --
--- Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read
+-- Want this for your agent's real traffic? Free 48h read: https://faultwall.com
 -------------------
 PASS  --fix has the Rev 4 header
-PASS  --fix has the 'Still requires Faultwall' section
+PASS  --fix has the 'Not enforced by audit or this generated role' section
+PASS  --fix labels the Agents-page path as planned
+PASS  --fix keeps the direct-Postgres alternative
 PASS  --fix: NOLOGIN role
 PASS  --fix: column grant leaves out password_hash
 PASS  --fix: quotes weird names
 PASS  --fix: never REVOKE / ALTER / DROP (anywhere, comments included)
 PASS  --fix: no grant to an existing role
 PASS  --fix: no write grants by default
+PASS  --fix lists rights inherited through PUBLIC (dblink), without REVOKE
+PASS  --fix names dblink* under PUBLIC
+PASS  --fix control section describes the new role
+PASS  --fix Faultwall section does not describe the audited role
+PASS  --fix notes SELECT * fails on column-granted tables
 PASS  --fix --writes tickets grants writes on tickets only
 PASS  --fix --proxy-role grants the new role to the proxy login
 PASS  --fix refuses a role name that already exists
@@ -232,22 +249,23 @@ PASS  new role can't SELECT api_tokens.token / billing.invoices.card_token
 PASS  new role can't DELETE
 PASS  new role can't UPDATE / TRUNCATE / DROP
 PASS  new role can't CREATE in public
+PASS  the PUBLIC listing is true: new role can really EXECUTE dblink
 PASS  --writes role can INSERT/DELETE on tickets
 PASS  --writes role still can't DELETE on orders
 PASS  proxy login can switch to the --writes role
 PASS  the shared app user still works after --fix (nothing revoked)
 == 500-table scale
-generated 500 tables + 20 views in 1.51s
+generated 500 tables + 20 views in 1.56s
 faultwall audit: role fwa_big on database fwa_scratch500 at 127.0.0.1:5544 (PostgreSQL 16.13 (Homebrew))
 Read-only: nothing was changed. No network calls besides this database connection.
 
 Summary
-  fwa_big can DELETE on 500 of 500 tables, UPDATE 500, TRUNCATE 500, and read 100 secret columns (t_1.api_token, t_10.password_hash, t_11.api_token, +97 more).
-  Owns 500 (can ALTER/DROP). 10 views read secret columns. 2 dangerous functions executable (pg_cancel_backend, pg_terminate_backend).
+  fwa_big can DELETE on 500 of 500 tables, UPDATE 500, INSERT 500, TRUNCATE 500, and read 100 secret columns (t_1.api_token, t_10.password_hash, t_11.api_token, +97 more).
+  Owns 500 (can ALTER/DROP). 10 views read secret columns. 0 dangerous functions executable.
 PASS  500 tables: audit exits 0 (rc=0)
 PASS  500 tables: summary counts 500 tables
 PASS  500 tables: audit under 60s (0.07s)
 PASS  500 tables: --fix under 60s (0.05s)
 500-table audit wall time: 0.07s, --fix: 0.05s
 
-== result: 65 passed, 0 failed. fixture audit 0.31s, 500-table audit 0.07s, total e2e 5.45s
+== result: 75 passed, 0 failed. fixture audit 0.49s, 500-table audit 0.07s, total e2e 8.50s

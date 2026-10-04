@@ -1,7 +1,7 @@
 package main
 
 // audit_report.go: findings (each labeled "enforced by Postgres" or
-// "enforced by Faultwall") and the human-readable report for
+// "not enforced by audit or Postgres grants", with proxy availability) and the human-readable report for
 // `faultwall audit`.
 
 import (
@@ -80,8 +80,23 @@ func addFinding(rep *AuditReport, id string, faultwall bool, text string) {
 	f := AuditFinding{ID: id, EnforcedBy: "postgres", Label: labelPostgres, Text: text}
 	if faultwall {
 		f.EnforcedBy, f.Label = "faultwall", labelFaultwall
+		if a, ok := auditControlStatus[id]; ok {
+			f.Availability = a.level
+			f.Text += " " + a.text
+		}
 	}
 	rep.Findings = append(rep.Findings, f)
+}
+
+// auditControlStatus says what the FaultWall proxy in THIS release does about
+// each control Postgres can't express. Keep it true for the shipped binary:
+// "proxy" only for things policy.go/proxy.go enforce today.
+var auditControlStatus = map[string]struct{ level, text string }{
+	"no_where":       {"proxy", "FaultWall proxy today, in enforce mode: the standard and strict profiles block UPDATE and DELETE without a WHERE."},
+	"row_cap":        {"partial", "FaultWall proxy today: max_rows limits the rows one statement returns. A cap on rows changed is planned, not in this release."},
+	"approval":       {"planned", "Planned in the FaultWall app, not in this release: writes that pause until a person approves."},
+	"agent_identity": {"partial", "FaultWall proxy today: each agent is named by application_name, with an optional per-agent auth_token. Per-agent keys are planned in the FaultWall app."},
+	"query_shape":    {"proxy", "FaultWall proxy today, in enforce mode: block by operation, table, column and function per agent."},
 }
 
 // buildAuditFindings fills rep.Findings from the collected data. Postgres
@@ -302,7 +317,7 @@ func renderAuditText(rep *AuditReport, all bool) string {
 	}
 	b.WriteString("  Run faultwall audit --fix for SQL that creates a narrower role for one agent.\n\n")
 
-	b.WriteString("Still requires Faultwall (enforced by Faultwall, Postgres can't express these)\n")
+	b.WriteString("Not enforced by audit or Postgres grants (what the FaultWall proxy does today, and what is planned)\n")
 	for _, f := range rep.Findings {
 		if f.EnforcedBy == "faultwall" {
 			b.WriteString("  - " + f.Text + "\n")
@@ -411,7 +426,7 @@ func auditSummaryLine1(rep *AuditReport) string {
 	} else {
 		parts = append(parts, fmt.Sprintf("DELETE on 0 of %d tables", s.Tables))
 	}
-	parts = append(parts, fmt.Sprintf("UPDATE %d", s.Update), fmt.Sprintf("TRUNCATE %d", s.Truncate))
+	parts = append(parts, fmt.Sprintf("UPDATE %d", s.Update), fmt.Sprintf("INSERT %d", s.Insert), fmt.Sprintf("TRUNCATE %d", s.Truncate))
 	sc := readableSecretColumns(rep)
 	sec := fmt.Sprintf("read %d secret %s", len(sc), plural(len(sc), "column", "columns"))
 	if len(sc) > 0 {

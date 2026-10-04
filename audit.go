@@ -33,7 +33,9 @@ import (
 )
 
 // auditReadURL is the free 48h read offer. Keep it in one place.
-const auditReadURL = "https://faultwall.com/read"
+// Points at the homepage until faultwall.com/read is published (founder
+// approval of the copy); switch back with a one-line change.
+const auditReadURL = "https://faultwall.com"
 
 // auditCTA is the single closing line of the human report.
 const auditCTA = "Want this for your agent's real traffic? Free 48h read: " + auditReadURL
@@ -46,7 +48,7 @@ const auditFixHeader = "Generates the database privileges that can be represente
 
 const (
 	labelPostgres  = "enforced by Postgres"
-	labelFaultwall = "enforced by Faultwall"
+	labelFaultwall = "not enforced by audit or Postgres grants"
 )
 
 // auditDangerousFunctions are checked for EXECUTE (plus every dblink*).
@@ -154,8 +156,12 @@ type AuditSummary struct {
 type AuditFinding struct {
 	ID         string `json:"id"`
 	EnforcedBy string `json:"enforced_by"` // "postgres" | "faultwall"
-	Label      string `json:"label"`       // "enforced by Postgres" | "enforced by Faultwall"
+	Label      string `json:"label"`       // "enforced by Postgres" | "not enforced by audit or Postgres grants"
 	Text       string `json:"text"`
+	// Availability, for findings Postgres can't enforce: what the FaultWall
+	// proxy in this release does about it. "proxy" = available now, "partial",
+	// or "planned" (not in this release).
+	Availability string `json:"availability,omitempty"`
 }
 
 type AuditDatabase struct {
@@ -270,8 +276,9 @@ func auditUsage() string {
 Prints what a Postgres role can do: role attributes, per-table privileges,
 ownership (can DROP), RLS, secret-looking columns, views that read them,
 dangerous functions, server file access and extensions. Each finding says
-"enforced by Postgres" (a native grant can fix it) or "enforced by Faultwall"
-(Postgres can't express it).
+"enforced by Postgres" (a native grant can fix it) or "not enforced by audit or
+Postgres grants" (Postgres can't express it), with what the FaultWall proxy can
+do about it today and what is planned.
 
 Uses DATABASE_URL when no URL is given.
 
@@ -982,10 +989,17 @@ func computeAuditSummary(rep *AuditReport) {
 func auditExecutableFunctionNames(rep *AuditReport) []string {
 	seen := map[string]bool{}
 	var out []string
+	// pg_cancel_backend / pg_terminate_backend are EXECUTE-able by PUBLIC on
+	// every server; without pg_signal_backend (or superuser) they only reach
+	// the role's own sessions, so flagging them is noise.
+	canSignal := rep.Role.Superuser || rep.Role.Predefined["pg_signal_backend"]
 	for _, f := range rep.Functions {
 		name := f.Name
 		if strings.HasPrefix(name, "dblink") {
 			name = "dblink*"
+		}
+		if (name == "pg_cancel_backend" || name == "pg_terminate_backend") && !canSignal {
+			continue
 		}
 		if f.Execute && !seen[name] {
 			seen[name] = true
