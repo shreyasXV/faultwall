@@ -150,7 +150,8 @@ func TestAuditSummaryCounts(t *testing.T) {
 	if s.SecretColumnsReadable != 2 { // users.password_hash, Weird.api_token; actor_ssn has no column grant
 		t.Fatalf("secret readable = %d", s.SecretColumnsReadable)
 	}
-	if s.SensitiveViewsReadable != 1 || s.DangerousFunctionsExec != 2 {
+	// dblink* counts; pg_terminate_backend doesn't (no pg_signal_backend, own sessions only)
+	if s.SensitiveViewsReadable != 1 || s.DangerousFunctionsExec != 1 {
 		t.Fatalf("views=%d funcs=%d", s.SensitiveViewsReadable, s.DangerousFunctionsExec)
 	}
 }
@@ -188,7 +189,7 @@ func TestAuditTextFormat(t *testing.T) {
 	if lines[len(lines)-1] != auditCTA {
 		t.Errorf("last line = %q, want the CTA", lines[len(lines)-1])
 	}
-	if !strings.Contains(out, "Summary\n  app_user can DELETE on 4 of 6 tables, UPDATE 4, TRUNCATE 4, and read 2 secret columns (users.password_hash, ") {
+	if !strings.Contains(out, "Summary\n  app_user can DELETE on 4 of 6 tables, UPDATE 4, INSERT 4, TRUNCATE 4, and read 2 secret columns (users.password_hash, ") {
 		t.Errorf("summary line 1 missing:\n%s", out)
 	}
 	if !strings.Contains(out, "Superuser: no. Bypasses RLS: no.") {
@@ -196,7 +197,7 @@ func TestAuditTextFormat(t *testing.T) {
 	}
 	for _, want := range []string{
 		"(enforced by Postgres)", "(enforced by Faultwall", "public.user_logins reads public.users.password_hash",
-		"dblink*", "pg_terminate_backend", "Writes without a WHERE clause", "Per-agent identity on a shared login",
+		"dblink*", "Writes without a WHERE clause", "Per-agent identity on a shared login",
 		"3 sessions are open as app_user", "public.audit_log.actor_ssn: no SELECT",
 	} {
 		if !strings.Contains(out, want) {
@@ -466,4 +467,54 @@ func TestAuditHelpMentionsSafety(t *testing.T) {
 		}
 	}
 	checkAuditCopy(t, "help", h+"\n"+auditReadURL)
+}
+
+// pg_cancel/terminate_backend are only flagged when the role can signal
+// other sessions (pg_signal_backend or superuser).
+func TestAuditSignalFunctionsOnlyWithSignalBackend(t *testing.T) {
+	rep := sampleAuditReport()
+	if fn := auditExecutableFunctionNames(rep); strings.Contains(strings.Join(fn, ","), "pg_terminate_backend") {
+		t.Fatalf("flagged without pg_signal_backend: %v", fn)
+	}
+	rep.Role.Predefined["pg_signal_backend"] = true
+	if fn := auditExecutableFunctionNames(rep); !strings.Contains(strings.Join(fn, ","), "pg_terminate_backend") {
+		t.Fatalf("not flagged with pg_signal_backend: %v", fn)
+	}
+}
+
+// --fix: PUBLIC-inherited rights are listed (never revoked), the Faultwall
+// section describes the NEW role and its writable tables, and column-level
+// grants come with the SELECT * caveat.
+func TestAuditFixPublicInheritedAndNewRoleControls(t *testing.T) {
+	rep := sampleAuditReport()
+	rep.Schemas[0].PublicCreate = true
+	out, err := buildAuditFix(rep, &auditOptions{Fix: true, Agent: "support", Writes: []string{"tickets"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"-- Still inherited through PUBLIC (affects every role, review with your DBA)",
+		"EXECUTE on public.dblink* (granted to PUBLIC).",
+		"CREATE on schema public: it can create tables and functions there.",
+		"for fw_agent_support (enforced by Faultwall):",
+		"Writes without a WHERE clause: fw_agent_support can UPDATE or DELETE every row of public.tickets in one statement.",
+		"SELECT * fails for fw_agent_support (permission denied).",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--fix missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "app_user can UPDATE or DELETE every row") {
+		t.Errorf("--fix Faultwall section must describe the new role, not the audited one:\n%s", out)
+	}
+	if strings.Contains(out, "pg_terminate_backend") {
+		t.Errorf("own-session signal functions should not be listed:\n%s", out)
+	}
+	ro, err := buildAuditFix(rep, &auditOptions{Fix: true, Agent: "reader"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ro, "every row of") || !strings.Contains(ro, "Row-count caps: Postgres can't limit how many rows one SELECT by fw_agent_reader returns") {
+		t.Errorf("read-only role controls wrong:\n%s", ro)
+	}
 }

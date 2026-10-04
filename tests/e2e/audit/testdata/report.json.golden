@@ -45,7 +45,7 @@
     "views_readable": 2,
     "secret_columns_readable": 2,
     "sensitive_views_readable": 1,
-    "dangerous_functions_executable": 2,
+    "dangerous_functions_executable": 1,
     "rls_tables": 1,
     "rls_applies_to_role": 0,
     "schemas_with_create": 1,
@@ -110,7 +110,7 @@
       "id": "dangerous_functions",
       "enforced_by": "postgres",
       "label": "enforced by Postgres",
-      "text": "Can EXECUTE 2 dangerous functions: dblink*, pg_terminate_backend."
+      "text": "Can EXECUTE 1 dangerous function: dblink*."
     },
     {
       "id": "extensions",
@@ -422,5 +422,5 @@
     "open": 3,
     "application_names": 1
   },
-  "cta": "Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read"
+  "cta": "Want this for your agent's real traffic? Free 48h read: https://faultwall.com"
 }
