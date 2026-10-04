@@ -7,13 +7,15 @@
 
 BEGIN;
 
--- 1. The role. NOLOGIN: FaultWall's proxy switches to it (db_role on the Agents page).
---    For an agent that connects to Postgres directly instead, use this line in place of the next one:
+-- 1. The role.
+--    Available now: for an agent that connects to Postgres directly, use this line in place of the next one:
 --    CREATE ROLE fw_agent_support_bot LOGIN PASSWORD 'choose-a-long-random-password';
+--    NOLOGIN (below) is for the planned FaultWall app, where the proxy switches to this role for one agent
+--    (Database role on the Agents page). That is not in this release.
 CREATE ROLE fw_agent_support_bot NOLOGIN;
 
--- To use it through FaultWall, let the proxy's login switch to it, then set the agent's
--- Database role on the Agents page (or rerun with --proxy-role NAME):
+-- Planned FaultWall app, not in this release: let the proxy's login switch to it, then set the
+-- agent's Database role on the Agents page (or rerun with --proxy-role NAME):
 --    GRANT fw_agent_support_bot TO faultwall_proxy;
 
 -- 2. Schema access.
@@ -46,12 +48,12 @@ COMMIT;
 -- This script does not change them: it only creates and grants to the new role.
 --   - EXECUTE on public.dblink* (granted to PUBLIC).
 
--- Still requires Faultwall
--- These controls can't be written as Postgres grants for fw_agent_support_bot (enforced by Faultwall):
---   - Writes without a WHERE clause: fw_agent_support_bot can UPDATE or DELETE every row of public.tickets in one statement. A grant can't require a WHERE.
---   - Row-count caps: nothing stops one UPDATE or DELETE from fw_agent_support_bot touching every row of public.tickets.
---   - Approval before a write: Postgres can't pause fw_agent_support_bot's writes to public.tickets until a person approves them.
---   - Per-agent identity: if more than one agent uses fw_agent_support_bot, Postgres sees them as the same role. FaultWall gives each agent its own key on top of it.
---   - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table).
+-- Not enforced by audit or this generated role
+-- Postgres grants can't express these for fw_agent_support_bot. Each line says what the FaultWall proxy does today and what is planned:
+--   - Writes without a WHERE clause: fw_agent_support_bot can UPDATE or DELETE every row of public.tickets in one statement. A grant can't require a WHERE. FaultWall proxy today, in enforce mode: the standard and strict profiles block UPDATE and DELETE without a WHERE.
+--   - Row-count caps: nothing stops one UPDATE or DELETE from fw_agent_support_bot touching every row of public.tickets. FaultWall proxy today: max_rows limits the rows one statement returns. A cap on rows changed is planned, not in this release.
+--   - Approval before a write: Postgres can't pause fw_agent_support_bot's writes to public.tickets until a person approves them. Planned in the FaultWall app, not in this release: writes that pause until a person approves.
+--   - Per-agent identity: if more than one agent uses fw_agent_support_bot, Postgres sees them as the same role. FaultWall proxy today: each agent is named by application_name, with an optional per-agent auth_token. Per-agent keys are planned in the FaultWall app.
+--   - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). FaultWall proxy today, in enforce mode: block by operation, table, column and function per agent.
 --
 -- Want this for your agent's real traffic? Free 48h read: https://faultwall.com

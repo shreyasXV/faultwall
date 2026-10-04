@@ -196,7 +196,7 @@ func TestAuditTextFormat(t *testing.T) {
 		t.Error("superuser/RLS line missing")
 	}
 	for _, want := range []string{
-		"(enforced by Postgres)", "(enforced by Faultwall", "public.user_logins reads public.users.password_hash",
+		"(enforced by Postgres)", "Not enforced by audit or Postgres grants", "public.user_logins reads public.users.password_hash",
 		"dblink*", "Writes without a WHERE clause", "Per-agent identity on a shared login",
 		"3 sessions are open as app_user", "public.audit_log.actor_ssn: no SELECT",
 	} {
@@ -328,8 +328,8 @@ func TestAuditFixNeverRevokesAltersOrDrops(t *testing.T) {
 		if strings.Count(out, "CREATE ROLE") != 2 { // the statement + the commented LOGIN variant
 			t.Errorf("want one CREATE ROLE (+1 commented), got:\n%s", out)
 		}
-		if !strings.Contains(out, auditFixHeader) || !strings.Contains(out, "-- Still requires Faultwall\n") {
-			t.Error("missing Rev 4 header or Still requires Faultwall section")
+		if !strings.Contains(out, auditFixHeader) || !strings.Contains(out, "-- Not enforced by audit or this generated role\n") {
+			t.Error("missing Rev 4 header or 'Not enforced by audit or this generated role' section")
 		}
 		checkAuditCopy(t, "fix", out)
 	}
@@ -496,7 +496,7 @@ func TestAuditFixPublicInheritedAndNewRoleControls(t *testing.T) {
 		"-- Still inherited through PUBLIC (affects every role, review with your DBA)",
 		"EXECUTE on public.dblink* (granted to PUBLIC).",
 		"CREATE on schema public: it can create tables and functions there.",
-		"for fw_agent_support (enforced by Faultwall):",
+		"Postgres grants can't express these for fw_agent_support. Each line says what the FaultWall proxy does today and what is planned:",
 		"Writes without a WHERE clause: fw_agent_support can UPDATE or DELETE every row of public.tickets in one statement.",
 		"SELECT * fails for fw_agent_support (permission denied).",
 	} {
@@ -516,5 +516,53 @@ func TestAuditFixPublicInheritedAndNewRoleControls(t *testing.T) {
 	}
 	if strings.Contains(ro, "every row of") || !strings.Contains(ro, "Row-count caps: Postgres can't limit how many rows one SELECT by fw_agent_reader returns") {
 		t.Errorf("read-only role controls wrong:\n%s", ro)
+	}
+}
+
+// Release copy (CPO 09:14): nothing in this release is described as enforced
+// when it isn't. Each Postgres-can't control carries its availability, and the
+// Agents-page / NOLOGIN path is labeled as planned.
+func TestAuditAvailabilityLabels(t *testing.T) {
+	rep := sampleAuditReport()
+	want := map[string]string{"no_where": "proxy", "row_cap": "partial", "approval": "planned", "agent_identity": "partial", "query_shape": "proxy"}
+	got := map[string]string{}
+	for _, f := range rep.Findings {
+		if f.EnforcedBy == "faultwall" {
+			got[f.ID] = f.Availability
+			if f.Label != "not enforced by audit or Postgres grants" {
+				t.Errorf("%s label = %q", f.ID, f.Label)
+			}
+		}
+	}
+	for id, w := range want {
+		if got[id] != w {
+			t.Errorf("%s availability = %q, want %q", id, got[id], w)
+		}
+	}
+	out := renderAuditText(rep, false)
+	if strings.Contains(out, "enforced by Faultwall") || strings.Contains(out, "Still requires Faultwall") {
+		t.Errorf("report still claims Faultwall enforcement:\n%s", out)
+	}
+	for _, w := range []string{"Planned in the FaultWall app, not in this release: writes that pause", "A cap on rows changed is planned, not in this release."} {
+		if !strings.Contains(out, w) {
+			t.Errorf("report missing %q", w)
+		}
+	}
+	fx, err := buildAuditFix(rep, &auditOptions{Fix: true, Agent: "support", Writes: []string{"tickets"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		"Available now: for an agent that connects to Postgres directly",
+		"NOLOGIN (below) is for the planned FaultWall app",
+		"That is not in this release.",
+		"Planned FaultWall app, not in this release: let the proxy's login switch to it",
+	} {
+		if !strings.Contains(fx, w) {
+			t.Errorf("--fix missing %q", w)
+		}
+	}
+	if strings.Contains(fx, "enforced by Faultwall") {
+		t.Errorf("--fix still claims Faultwall enforcement:\n%s", fx)
 	}
 }

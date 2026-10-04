@@ -262,17 +262,19 @@ func buildAuditFix(rep *AuditReport, o *auditOptions) (string, error) {
 	b.WriteString("-- Secret-looking columns are left out with column-level grants. Views that read them are left out.\n\n")
 
 	b.WriteString("BEGIN;\n\n")
-	b.WriteString("-- 1. The role. NOLOGIN: FaultWall's proxy switches to it (db_role on the Agents page).\n")
-	b.WriteString("--    For an agent that connects to Postgres directly instead, use this line in place of the next one:\n")
+	b.WriteString("-- 1. The role.\n")
+	b.WriteString("--    Available now: for an agent that connects to Postgres directly, use this line in place of the next one:\n")
 	fmt.Fprintf(&b, "--    CREATE ROLE %s LOGIN PASSWORD 'choose-a-long-random-password';\n", qr)
+	b.WriteString("--    NOLOGIN (below) is for the planned FaultWall app, where the proxy switches to this role for one agent\n")
+	b.WriteString("--    (Database role on the Agents page). That is not in this release.\n")
 	fmt.Fprintf(&b, "CREATE ROLE %s NOLOGIN;\n\n", qr)
 
 	if o.ProxyRole != "" {
-		b.WriteString("-- Let FaultWall's proxy login switch to the new role.\n")
+		b.WriteString("-- Let the proxy's login switch to the new role (used by the planned FaultWall app).\n")
 		fmt.Fprintf(&b, "GRANT %s TO %s;\n\n", qr, auditQuoteIdent(o.ProxyRole))
 	} else {
-		b.WriteString("-- To use it through FaultWall, let the proxy's login switch to it, then set the agent's\n")
-		b.WriteString("-- Database role on the Agents page (or rerun with --proxy-role NAME):\n")
+		b.WriteString("-- Planned FaultWall app, not in this release: let the proxy's login switch to it, then set the\n")
+		b.WriteString("-- agent's Database role on the Agents page (or rerun with --proxy-role NAME):\n")
 		fmt.Fprintf(&b, "--    GRANT %s TO faultwall_proxy;\n\n", qr)
 	}
 
@@ -339,8 +341,8 @@ func buildAuditFix(rep *AuditReport, o *auditOptions) (string, error) {
 		b.WriteString("\n")
 	}
 
-	b.WriteString("-- Still requires Faultwall\n")
-	fmt.Fprintf(&b, "-- These controls can't be written as Postgres grants for %s (enforced by Faultwall):\n", role)
+	b.WriteString("-- Not enforced by audit or this generated role\n")
+	fmt.Fprintf(&b, "-- Postgres grants can't express these for %s. Each line says what the FaultWall proxy does today and what is planned:\n", role)
 	for _, c := range auditFixFaultwallControls(role, writeTablesList(writes, rels)) {
 		b.WriteString("--   - " + auditSanitizeFixComment(c) + "\n")
 	}
@@ -411,17 +413,17 @@ func writeTablesList(writes map[string]bool, rels map[string]*fixRel) []string {
 func auditFixFaultwallControls(role string, writeTables []string) []string {
 	var out []string
 	if len(writeTables) > 0 {
-		out = append(out, fmt.Sprintf("Writes without a WHERE clause: %s can UPDATE or DELETE every row of %s in one statement. A grant can't require a WHERE.",
-			role, listSome(writeTables, 5)))
-		out = append(out, fmt.Sprintf("Row-count caps: nothing stops one UPDATE or DELETE from %s touching every row of %s.", role, listSome(writeTables, 5)))
-		out = append(out, fmt.Sprintf("Approval before a write: Postgres can't pause %s's writes to %s until a person approves them.", role, listSome(writeTables, 5)))
+		out = append(out, fmt.Sprintf("Writes without a WHERE clause: %s can UPDATE or DELETE every row of %s in one statement. A grant can't require a WHERE. ",
+			role, listSome(writeTables, 5))+auditControlStatus["no_where"].text)
+		out = append(out, fmt.Sprintf("Row-count caps: nothing stops one UPDATE or DELETE from %s touching every row of %s. ", role, listSome(writeTables, 5))+auditControlStatus["row_cap"].text)
+		out = append(out, fmt.Sprintf("Approval before a write: Postgres can't pause %s's writes to %s until a person approves them. ", role, listSome(writeTables, 5))+auditControlStatus["approval"].text)
 	} else {
-		out = append(out, fmt.Sprintf("Row-count caps: Postgres can't limit how many rows one SELECT by %s returns (a full export of every readable table is allowed).", role))
-		out = append(out, "Approval before a write: if you later grant writes, Postgres can't pause them until a person approves.")
+		out = append(out, fmt.Sprintf("Row-count caps: Postgres can't limit how many rows one SELECT by %s returns (a full export of every readable table is allowed). ", role)+auditControlStatus["row_cap"].text)
+		out = append(out, "Approval before a write: if you later grant writes, Postgres can't pause them until a person approves. "+auditControlStatus["approval"].text)
 	}
 	out = append(out,
-		fmt.Sprintf("Per-agent identity: if more than one agent uses %s, Postgres sees them as the same role. FaultWall gives each agent its own key on top of it.", role),
-		"Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table).",
+		fmt.Sprintf("Per-agent identity: if more than one agent uses %s, Postgres sees them as the same role.", role)+" "+auditControlStatus["agent_identity"].text,
+		"Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). "+auditControlStatus["query_shape"].text,
 	)
 	return out
 }

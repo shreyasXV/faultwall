@@ -48,7 +48,7 @@ const auditFixHeader = "Generates the database privileges that can be represente
 
 const (
 	labelPostgres  = "enforced by Postgres"
-	labelFaultwall = "enforced by Faultwall"
+	labelFaultwall = "not enforced by audit or Postgres grants"
 )
 
 // auditDangerousFunctions are checked for EXECUTE (plus every dblink*).
@@ -156,8 +156,12 @@ type AuditSummary struct {
 type AuditFinding struct {
 	ID         string `json:"id"`
 	EnforcedBy string `json:"enforced_by"` // "postgres" | "faultwall"
-	Label      string `json:"label"`       // "enforced by Postgres" | "enforced by Faultwall"
+	Label      string `json:"label"`       // "enforced by Postgres" | "not enforced by audit or Postgres grants"
 	Text       string `json:"text"`
+	// Availability, for findings Postgres can't enforce: what the FaultWall
+	// proxy in this release does about it. "proxy" = available now, "partial",
+	// or "planned" (not in this release).
+	Availability string `json:"availability,omitempty"`
 }
 
 type AuditDatabase struct {
@@ -272,8 +276,9 @@ func auditUsage() string {
 Prints what a Postgres role can do: role attributes, per-table privileges,
 ownership (can DROP), RLS, secret-looking columns, views that read them,
 dangerous functions, server file access and extensions. Each finding says
-"enforced by Postgres" (a native grant can fix it) or "enforced by Faultwall"
-(Postgres can't express it).
+"enforced by Postgres" (a native grant can fix it) or "not enforced by audit or
+Postgres grants" (Postgres can't express it), with what the FaultWall proxy can
+do about it today and what is planned.
 
 Uses DATABASE_URL when no URL is given.
 
