@@ -49,6 +49,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "audit":
+			if err := runAudit(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "Error:", err)
+				os.Exit(1)
+			}
+			return
 		case "agent-url":
 			if err := runAgentURL(os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "Error:", err)

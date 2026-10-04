@@ -15,6 +15,7 @@ Usage:
 
 Commands:
   try          Zero-config monitor mode + live view (demo DB if no URL given)
+  audit        Read-only check of what a database role can do (--fix prints SQL for a narrower role; no network calls)
   init         Scaffold a new faultwall.yaml policy file
   agent-url    Print a ready-to-use connection string
   version      Print version info
