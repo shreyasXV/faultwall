@@ -294,6 +294,16 @@ func buildAuditFix(rep *AuditReport, o *auditOptions) (string, error) {
 	for _, g := range grants {
 		b.WriteString(g + "\n")
 	}
+	colLevel := 0
+	for _, g := range grants {
+		if strings.Contains(g, "-- leaves out") {
+			colLevel++
+		}
+	}
+	if colLevel > 0 {
+		fmt.Fprintf(&b, "-- Note: on the %d %s granted by column, SELECT * fails for %s (permission denied).\n", colLevel, plural(colLevel, "table", "tables"), role)
+		b.WriteString("-- Agents have to name the columns they need. That is the point: * would include the secret column.\n")
+	}
 	if len(skipped) > 0 {
 		b.WriteString("-- Left out because they read secret-looking columns:\n")
 		for _, s := range skipped {
@@ -319,10 +329,20 @@ func buildAuditFix(rep *AuditReport, o *auditOptions) (string, error) {
 
 	b.WriteString("COMMIT;\n\n")
 
+	if inh := auditPublicInherited(rep); len(inh) > 0 {
+		fmt.Fprintf(&b, "-- Still inherited through PUBLIC (affects every role, review with your DBA)\n")
+		fmt.Fprintf(&b, "-- %s gets these too, because they are granted to PUBLIC, not to any one role.\n", role)
+		b.WriteString("-- This script does not change them: it only creates and grants to the new role.\n")
+		for _, x := range inh {
+			b.WriteString("--   - " + auditSanitizeFixComment(x) + "\n")
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("-- Still requires Faultwall\n")
-	b.WriteString("-- These controls can't be written as Postgres grants (enforced by Faultwall):\n")
-	for _, c := range auditFaultwallControls(rep) {
-		b.WriteString("--   - " + auditSanitizeFixComment(c.text) + "\n")
+	fmt.Fprintf(&b, "-- These controls can't be written as Postgres grants for %s (enforced by Faultwall):\n", role)
+	for _, c := range auditFixFaultwallControls(role, writeTablesList(writes, rels)) {
+		b.WriteString("--   - " + auditSanitizeFixComment(c) + "\n")
 	}
 	b.WriteString("--\n-- " + auditCTA + "\n")
 	return b.String(), nil
@@ -372,4 +392,84 @@ func auditResolveTable(rep *AuditReport, name string) (string, error) {
 	default:
 		return "", fmt.Errorf("--writes: %q matches tables in more than one schema, use schema.table", name)
 	}
+}
+
+// writeTablesList returns "schema.table" names granted writes by --writes.
+func writeTablesList(writes map[string]bool, rels map[string]*fixRel) []string {
+	var out []string
+	for k := range writes {
+		if fr := rels[k]; fr != nil {
+			out = append(out, fr.schema+"."+fr.name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// auditFixFaultwallControls describes what Postgres still can't express for
+// the NEW role (its writable tables, not the audited role's).
+func auditFixFaultwallControls(role string, writeTables []string) []string {
+	var out []string
+	if len(writeTables) > 0 {
+		out = append(out, fmt.Sprintf("Writes without a WHERE clause: %s can UPDATE or DELETE every row of %s in one statement. A grant can't require a WHERE.",
+			role, listSome(writeTables, 5)))
+		out = append(out, fmt.Sprintf("Row-count caps: nothing stops one UPDATE or DELETE from %s touching every row of %s.", role, listSome(writeTables, 5)))
+		out = append(out, fmt.Sprintf("Approval before a write: Postgres can't pause %s's writes to %s until a person approves them.", role, listSome(writeTables, 5)))
+	} else {
+		out = append(out, fmt.Sprintf("Row-count caps: Postgres can't limit how many rows one SELECT by %s returns (a full export of every readable table is allowed).", role))
+		out = append(out, "Approval before a write: if you later grant writes, Postgres can't pause them until a person approves.")
+	}
+	out = append(out,
+		fmt.Sprintf("Per-agent identity: if more than one agent uses %s, Postgres sees them as the same role. FaultWall gives each agent its own key on top of it.", role),
+		"Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table).",
+	)
+	return out
+}
+
+// auditPublicInherited lists rights every role gets through PUBLIC that
+// matter for an agent: dangerous functions, CREATE on schemas, TEMP and
+// table privileges granted to PUBLIC.
+func auditPublicInherited(rep *AuditReport) []string {
+	var out []string
+	seen := map[string]bool{}
+	var fns []string
+	for _, f := range rep.Functions {
+		if !f.GrantedToPublic {
+			continue
+		}
+		name := f.Name
+		if strings.HasPrefix(name, "dblink") {
+			name = "dblink*"
+		}
+		if name == "pg_cancel_backend" || name == "pg_terminate_backend" {
+			continue // own-session only without pg_signal_backend
+		}
+		if !seen[name] {
+			seen[name] = true
+			fns = append(fns, f.Schema+"."+name)
+		}
+	}
+	sort.Strings(fns)
+	if len(fns) > 0 {
+		out = append(out, fmt.Sprintf("EXECUTE on %s (granted to PUBLIC).", listSome(fns, 6)))
+	}
+	var cs []string
+	for _, sc := range rep.Schemas {
+		if sc.PublicCreate {
+			cs = append(cs, sc.Name)
+		}
+	}
+	if len(cs) > 0 {
+		out = append(out, fmt.Sprintf("CREATE on schema %s: it can create tables and functions there.", listSome(cs, 6)))
+	}
+	var tp []string
+	for _, t := range rep.Tables {
+		if len(t.PublicPrivileges) > 0 {
+			tp = append(tp, fmt.Sprintf("%s.%s (%s)", t.Schema, t.Name, strings.Join(t.PublicPrivileges, ", ")))
+		}
+	}
+	if len(tp) > 0 {
+		out = append(out, fmt.Sprintf("Table privileges granted to PUBLIC on %d %s: %s.", len(tp), plural(len(tp), "table", "tables"), listSome(tp, 5)))
+	}
+	return out
 }

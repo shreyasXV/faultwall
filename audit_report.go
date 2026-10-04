@@ -411,7 +411,7 @@ func auditSummaryLine1(rep *AuditReport) string {
 	} else {
 		parts = append(parts, fmt.Sprintf("DELETE on 0 of %d tables", s.Tables))
 	}
-	parts = append(parts, fmt.Sprintf("UPDATE %d", s.Update), fmt.Sprintf("TRUNCATE %d", s.Truncate))
+	parts = append(parts, fmt.Sprintf("UPDATE %d", s.Update), fmt.Sprintf("INSERT %d", s.Insert), fmt.Sprintf("TRUNCATE %d", s.Truncate))
 	sc := readableSecretColumns(rep)
 	sec := fmt.Sprintf("read %d secret %s", len(sc), plural(len(sc), "column", "columns"))
 	if len(sc) > 0 {

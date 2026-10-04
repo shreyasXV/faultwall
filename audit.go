@@ -33,7 +33,9 @@ import (
 )
 
 // auditReadURL is the free 48h read offer. Keep it in one place.
-const auditReadURL = "https://faultwall.com/read"
+// Points at the homepage until faultwall.com/read is published (founder
+// approval of the copy); switch back with a one-line change.
+const auditReadURL = "https://faultwall.com"
 
 // auditCTA is the single closing line of the human report.
 const auditCTA = "Want this for your agent's real traffic? Free 48h read: " + auditReadURL
@@ -982,10 +984,17 @@ func computeAuditSummary(rep *AuditReport) {
 func auditExecutableFunctionNames(rep *AuditReport) []string {
 	seen := map[string]bool{}
 	var out []string
+	// pg_cancel_backend / pg_terminate_backend are EXECUTE-able by PUBLIC on
+	// every server; without pg_signal_backend (or superuser) they only reach
+	// the role's own sessions, so flagging them is noise.
+	canSignal := rep.Role.Superuser || rep.Role.Predefined["pg_signal_backend"]
 	for _, f := range rep.Functions {
 		name := f.Name
 		if strings.HasPrefix(name, "dblink") {
 			name = "dblink*"
+		}
+		if (name == "pg_cancel_backend" || name == "pg_terminate_backend") && !canSignal {
+			continue
 		}
 		if f.Execute && !seen[name] {
 			seen[name] = true
