@@ -15,12 +15,12 @@ import (
 
 // SecurityProfile defines a named security posture
 type SecurityProfile struct {
-	Name               string   // profile name
-	BlockedCategories  []string // e.g. ["DCL", "ADMIN", "EXTENSION", "FUNCTION"]
-	BlockedOperations  []string // specific ops blocked within allowed categories
-	AllowedOperations  []string // if non-empty, only these ops are allowed (allowlist mode)
-	Conditions         []string // e.g. ["DELETE must include WHERE", "UPDATE must include WHERE"]
-	AllowUnknown       bool     // whether to allow UNKNOWN operations
+	Name              string   // profile name
+	BlockedCategories []string // e.g. ["DCL", "ADMIN", "EXTENSION", "FUNCTION"]
+	BlockedOperations []string // specific ops blocked within allowed categories
+	AllowedOperations []string // if non-empty, only these ops are allowed (allowlist mode)
+	Conditions        []string // e.g. ["DELETE must include WHERE", "UPDATE must include WHERE"]
+	AllowUnknown      bool     // whether to allow UNKNOWN operations
 }
 
 // Built-in security profiles
@@ -100,17 +100,17 @@ type FingerprintRule struct {
 
 // AgentPolicy defines rules for a specific agent
 type AgentPolicy struct {
-	Description        string                   `yaml:"description" json:"description"`
-	AuthToken          string                   `yaml:"auth_token" json:"-"`
-	Profile            string                   `yaml:"profile" json:"profile"`
-	ProfileOverrides   *ProfileOverrides        `yaml:"profile_overrides" json:"profile_overrides"`
-	Missions           map[string]MissionPolicy `yaml:"missions" json:"missions"`
-	BlockedOperations  []string                 `yaml:"blocked_operations" json:"blocked_operations"`
-	BlockedTables      []string                 `yaml:"blocked_tables" json:"blocked_tables"`
-	BlockedColumns     map[string][]string      `yaml:"blocked_columns" json:"blocked_columns"` // table -> blocked column names (lowercase). Fires when the listed table is referenced AND any listed column appears in the query.
-	AllowedFunctions   []string                 `yaml:"allowed_functions" json:"allowed_functions"`
-	AllowedFingerprints []FingerprintRule       `yaml:"allowed_fingerprints,omitempty" json:"allowed_fingerprints,omitempty"`
-	PendingReview      []FingerprintRule        `yaml:"pending_review,omitempty" json:"pending_review,omitempty"` // informational only, never enforced
+	Description         string                   `yaml:"description" json:"description"`
+	AuthToken           string                   `yaml:"auth_token" json:"-"`
+	Profile             string                   `yaml:"profile" json:"profile"`
+	ProfileOverrides    *ProfileOverrides        `yaml:"profile_overrides" json:"profile_overrides"`
+	Missions            map[string]MissionPolicy `yaml:"missions" json:"missions"`
+	BlockedOperations   []string                 `yaml:"blocked_operations" json:"blocked_operations"`
+	BlockedTables       []string                 `yaml:"blocked_tables" json:"blocked_tables"`
+	BlockedColumns      map[string][]string      `yaml:"blocked_columns" json:"blocked_columns"` // table -> blocked column names (lowercase). Fires when the listed table is referenced AND any listed column appears in the query.
+	AllowedFunctions    []string                 `yaml:"allowed_functions" json:"allowed_functions"`
+	AllowedFingerprints []FingerprintRule        `yaml:"allowed_fingerprints,omitempty" json:"allowed_fingerprints,omitempty"`
+	PendingReview       []FingerprintRule        `yaml:"pending_review,omitempty" json:"pending_review,omitempty"` // informational only, never enforced
 }
 
 // MissionPolicy defines per-mission table/operation access
@@ -836,6 +836,22 @@ func (pe *PolicyEngine) checkQueryImpl(identity *AgentIdentity, parsed *ParsedQu
 						Action:    "pending",
 						Timestamp: time.Now(),
 					}
+				}
+			}
+
+			// Legacy: default-deny DCL (SET ROLE, SET SESSION AUTHORIZATION, GRANT,
+			// REVOKE, role DDL) when no profile is set. A blocked_operations list
+			// that forgets SET_ROLE must not let an agent switch identity (F6).
+			if OperationCategory[strings.ToUpper(op)] == "DCL" {
+				return &PolicyViolation{
+					AgentID:   identity.AgentID,
+					MissionID: identity.MissionID,
+					Query:     truncateQuery(query),
+					Reason:    "blocked_operation",
+					Operation: op,
+					PID:       pid,
+					Action:    "pending",
+					Timestamp: time.Now(),
 				}
 			}
 
