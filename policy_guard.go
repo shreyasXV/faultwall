@@ -108,6 +108,9 @@ func (c realPolicyClock) Mono() time.Duration { return time.Since(c.start) }
 
 // guardState is persisted (0600, atomic) next to the policy cache.
 type guardState struct {
+	// Anchor the state was written under (tenant/database/environment/key id).
+	// State from another anchor (re-enrolled proxy) is discarded on load.
+	Anchor          string            `json:"anchor"`
 	AcceptedVersion int64             `json:"accepted_version"`
 	PayloadSHA      map[string]string `json:"payload_sha256"` // version -> sha256(signed payload)
 	InstallationID  string            `json:"installation_id,omitempty"`
@@ -178,6 +181,11 @@ func (g *policyGuard) load() {
 	if st.PayloadSHA == nil {
 		st.PayloadSHA = map[string]string{}
 	}
+	if st.Anchor != g.anchorKey() {
+		log.Printf("⚠️  policy state was written for another scope or key (%s, now %s): discarding it; offline window expired until the next signed sync",
+			st.Anchor, g.anchorKey())
+		return
+	}
 	g.st = st
 	now := g.clock.Wall()
 	switch {
@@ -192,10 +200,20 @@ func (g *policyGuard) load() {
 	}
 }
 
+// anchorKey identifies the local trust anchor the state belongs to.
+func (g *policyGuard) anchorKey() string {
+	kid := ""
+	if g.pub != nil {
+		kid = policyKeyID(g.pub)
+	}
+	return g.anchor.TenantID + "/" + g.anchor.DatabaseID + "/" + g.anchor.Environment + "/" + kid
+}
+
 func (g *policyGuard) saveLocked() {
 	if g.statePath == "" {
 		return
 	}
+	g.st.Anchor = g.anchorKey()
 	now := g.clock.Wall()
 	if now.After(g.st.LastSeenWall) {
 		g.st.LastSeenWall = now

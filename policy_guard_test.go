@@ -532,3 +532,25 @@ func TestRevC_TamperedCacheRefused(t *testing.T) {
 		t.Fatal("tampered cache accepted")
 	}
 }
+
+// Re-enrolment under another key/scope: old state is discarded, not used to
+// reject the new control plane's versions (found in the slice 1 e2e rerun).
+func TestRevC_StateFromOtherAnchorDiscarded(t *testing.T) {
+	g := newGuardRig(t)
+	g.mustSync()
+	if g.ps.guard.AcceptedVersion() != 3 {
+		t.Fatal("setup")
+	}
+	cp2 := newFakeCP(t, g.clk) // new tenant key, same version number, different bytes
+	g.cp = cp2
+	g.srv.Config.Handler = cp2
+	g.restart()
+	if g.ps.guard.AcceptedVersion() != 0 || !g.ps.guard.Expired() {
+		t.Fatal("state from another anchor was kept")
+	}
+	g.mustSync()
+	if g.ps.guard.AcceptedVersion() != 3 || g.ps.guard.Expired() {
+		t.Fatal("new anchor's policy not accepted")
+	}
+	t.Log("re-enrol ok: state from another key discarded; new key's v3 accepted and fresh")
+}
