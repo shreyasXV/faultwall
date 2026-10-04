@@ -100,7 +100,16 @@ if curl -fsSL "https://github.com/${REPO}/releases/download/${VERSION}/checksums
   echo "→ Verifying checksum..."
   EXPECTED=$(grep "$ASSET" "$TMP/checksums.txt" | awk '{print $1}')
   if [[ -n "$EXPECTED" ]]; then
-    ACTUAL=$(shasum -a 256 "$TMP/$ASSET" | awk '{print $1}')
+    # shasum ships with macOS/perl; Debian/Ubuntu/Alpine minimal images only
+    # have coreutils sha256sum. Use whichever exists.
+    if command -v sha256sum >/dev/null 2>&1; then
+      ACTUAL=$(sha256sum "$TMP/$ASSET" | awk '{print $1}')
+    elif command -v shasum >/dev/null 2>&1; then
+      ACTUAL=$(shasum -a 256 "$TMP/$ASSET" | awk '{print $1}')
+    else
+      echo "✗ Need sha256sum or shasum to verify the download" >&2
+      exit 1
+    fi
     if [[ "$EXPECTED" != "$ACTUAL" ]]; then
       echo "✗ Checksum mismatch!" >&2
       echo "  expected: $EXPECTED" >&2
@@ -122,7 +131,8 @@ if [[ -z "$EXTRACTED" ]]; then
 fi
 
 # Verify it's actually an executable, not a misnamed archive
-if file "$EXTRACTED" | grep -qE 'gzip|compressed|archive'; then
+# (`file` is missing on minimal images — skip the check rather than fail)
+if command -v file >/dev/null 2>&1 && file "$EXTRACTED" | grep -qE 'gzip|compressed|archive'; then
   echo "✗ Expected binary but got archive: $EXTRACTED" >&2
   echo "  file type: $(file -b "$EXTRACTED")" >&2
   exit 1
@@ -198,6 +208,10 @@ EOF
 fi
 
 echo
-echo "Next: run"
+echo "Next: see your agent's queries in 60s (monitor mode, no YAML):"
+echo "  faultwall try                                   # demo DB + demo agent"
+echo "  faultwall try postgres://user:pass@host:5432/db # your database"
+echo
+echo "Or enforce with a policy file:"
 echo "  faultwall init"
 echo "  faultwall --proxy --policies faultwall.yaml"
