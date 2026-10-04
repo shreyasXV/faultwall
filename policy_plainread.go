@@ -124,7 +124,7 @@ func classifyPlainRead(query string, in plainReadInput) plainReadVerdict {
 			m, _ := body.(map[string]interface{})
 			switch typ {
 			case "TransactionStmt":
-				switch str(m["kind"]) {
+				switch jstr(m["kind"]) {
 				case "TRANS_STMT_BEGIN", "TRANS_STMT_START", "TRANS_STMT_COMMIT", "TRANS_STMT_ROLLBACK",
 					"TRANS_STMT_SAVEPOINT", "TRANS_STMT_RELEASE", "TRANS_STMT_ROLLBACK_TO":
 					continue
@@ -140,7 +140,7 @@ func classifyPlainRead(query string, in plainReadInput) plainReadVerdict {
 			case "ExplainStmt":
 				reads++
 				for _, o := range list(m["options"]) {
-					if de := child(o, "DefElem"); de != nil && strings.EqualFold(str(de["defname"]), "analyze") && defElemTrue(de) {
+					if de := child(o, "DefElem"); de != nil && strings.EqualFold(jstr(de["defname"]), "analyze") && defElemTrue(de) {
 						return protectedBecause("EXPLAIN ANALYZE runs the statement")
 					}
 				}
@@ -245,16 +245,16 @@ func (w *prWalk) node(typ string, m map[string]interface{}) {
 	switch typ {
 	case "SelectStmt":
 		if len(list(m["sortClause"])) > 0 || len(list(m["groupClause"])) > 0 || len(list(m["distinctClause"])) > 0 ||
-			len(list(m["windowClause"])) > 0 || (str(m["op"]) != "" && str(m["op"]) != "SETOP_NONE") {
+			len(list(m["windowClause"])) > 0 || (jstr(m["op"]) != "" && jstr(m["op"]) != "SETOP_NONE") {
 			w.implicit = true
 		}
 	case "FuncCall":
 		w.funcCall(m)
 	case "SQLValueFunction":
-		switch str(m["op"]) {
+		switch jstr(m["op"]) {
 		case "SVFOP_CURRENT_DATE", "SVFOP_CURRENT_TIMESTAMP", "SVFOP_CURRENT_TIMESTAMP_N":
 		default:
-			w.fail("function " + strings.ToLower(strings.TrimPrefix(str(m["op"]), "SVFOP_")) + " is not on the plain-read allowlist")
+			w.fail("function " + strings.ToLower(strings.TrimPrefix(jstr(m["op"]), "SVFOP_")) + " is not on the plain-read allowlist")
 		}
 	case "A_Expr":
 		w.aExpr(m)
@@ -262,7 +262,7 @@ func (w *prWalk) node(typ string, m map[string]interface{}) {
 		names := list(m["operName"])
 		if len(names) > 0 {
 			w.opName(names)
-		} else if t := str(m["subLinkType"]); t == "ANY_SUBLINK" || t == "ALL_SUBLINK" {
+		} else if t := jstr(m["subLinkType"]); t == "ANY_SUBLINK" || t == "ALL_SUBLINK" {
 			w.ops = append(w.ops, "=")
 		}
 	case "CaseExpr":
@@ -277,16 +277,16 @@ func (w *prWalk) node(typ string, m map[string]interface{}) {
 		}
 		for _, u := range list(m["usingClause"]) {
 			if s := child(u, "String"); s != nil {
-				w.cols = append(w.cols, strings.ToLower(str(s["sval"])))
+				w.cols = append(w.cols, strings.ToLower(jstr(s["sval"])))
 			}
 		}
 	case "TypeCast":
 		tn, _ := m["typeName"].(map[string]interface{})
 		w.typeName(tn)
 	case "RangeVar":
-		t := prTable{schema: strings.ToLower(str(m["schemaname"])), name: strings.ToLower(str(m["relname"]))}
+		t := prTable{schema: strings.ToLower(jstr(m["schemaname"])), name: strings.ToLower(jstr(m["relname"]))}
 		if a, ok := m["alias"].(map[string]interface{}); ok {
-			t.alias = strings.ToLower(str(a["aliasname"]))
+			t.alias = strings.ToLower(jstr(a["aliasname"]))
 		}
 		w.tables = append(w.tables, t)
 	case "ColumnRef":
@@ -298,7 +298,7 @@ func (w *prWalk) node(typ string, m map[string]interface{}) {
 		}
 		if n := len(fields); n > 0 {
 			if s := child(fields[n-1], "String"); s != nil {
-				name := strings.ToLower(str(s["sval"]))
+				name := strings.ToLower(jstr(s["sval"]))
 				w.cols = append(w.cols, name)
 				if n == 1 {
 					w.singleRef = append(w.singleRef, name)
@@ -333,7 +333,7 @@ func (w *prWalk) funcCall(m map[string]interface{}) {
 		schema = strings.ToLower(names[len(names)-2])
 	}
 	// TRIM(...) is parsed as pg_catalog.btrim/ltrim/rtrim (SQL syntax form).
-	if str(m["funcformat"]) == "COERCE_SQL_SYNTAX" && schema == "pg_catalog" {
+	if jstr(m["funcformat"]) == "COERCE_SQL_SYNTAX" && schema == "pg_catalog" {
 		switch fn {
 		case "btrim", "ltrim", "rtrim":
 			fn = "trim"
@@ -365,7 +365,7 @@ func (w *prWalk) funcCall(m map[string]interface{}) {
 
 func (w *prWalk) aExpr(m map[string]interface{}) {
 	names := list(m["name"])
-	switch str(m["kind"]) {
+	switch jstr(m["kind"]) {
 	case "AEXPR_BETWEEN", "AEXPR_NOT_BETWEEN", "AEXPR_BETWEEN_SYM", "AEXPR_NOT_BETWEEN_SYM":
 		w.ops = append(w.ops, ">=", "<=")
 		return
@@ -484,7 +484,7 @@ func splitTableName(t string) (schema, name string) {
 
 // ── JSON helpers ──
 
-func str(v interface{}) string {
+func jstr(v interface{}) string {
 	s, _ := v.(string)
 	return s
 }
@@ -507,7 +507,7 @@ func strList(v interface{}) []string {
 	var out []string
 	for _, e := range list(v) {
 		if s := child(e, "String"); s != nil {
-			out = append(out, str(s["sval"]))
+			out = append(out, jstr(s["sval"]))
 		}
 	}
 	return out
@@ -520,7 +520,7 @@ func defElemTrue(de map[string]interface{}) bool {
 		return true
 	}
 	if s := child(arg, "String"); s != nil {
-		switch strings.ToLower(str(s["sval"])) {
+		switch strings.ToLower(jstr(s["sval"])) {
 		case "false", "off", "0", "no":
 			return false
 		}
@@ -544,7 +544,7 @@ func defElemTrue(de map[string]interface{}) bool {
 			return v != 0
 		}
 		if sv, ok := c["sval"].(map[string]interface{}); ok {
-			switch strings.ToLower(str(sv["sval"])) {
+			switch strings.ToLower(jstr(sv["sval"])) {
 			case "false", "off", "0", "no":
 				return false
 			}
