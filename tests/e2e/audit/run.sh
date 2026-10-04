@@ -106,7 +106,9 @@ if [ "$DBLINK" = 1 ]; then
   check "dblink extension reported" has "$O" "Extensions that reach outside the database are installed: dblink."
 fi
 check "label: enforced by Postgres" has "$O" "(enforced by Postgres)"
-check "label: enforced by Faultwall" has "$O" "(enforced by Faultwall, Postgres can't express these)"
+check "label: not enforced by audit or Postgres grants" has "$O" "Not enforced by audit or Postgres grants (what the FaultWall proxy does today, and what is planned)"
+check "no claim of Faultwall enforcement in report" bash -c "! grep -q 'enforced by Faultwall' '$O'"
+check "approval marked planned" has "$O" "Planned in the FaultWall app, not in this release: writes that pause until a person approves."
 for c in "Writes without a WHERE clause" "Row-count caps" "Approval before a write" "Per-agent identity on a shared login" "Query-shape rules"; do
   check "Faultwall control listed: $c" has "$O" "  - $c"
 done
@@ -135,7 +137,8 @@ s = d["summary"]
 ok = (d["schema_version"] == 1 and d["role"]["name"] == "fwa_app_user" and s["tables"] == 43 and s["delete"] == 42
       and s["truncate"] == 42 and s["owned"] == 40 and s["secret_columns_readable"] == 4 and s["sensitive_views_readable"] == 1
       and d["cta"].endswith("https://faultwall.com")
-      and all(f["label"] in ("enforced by Postgres", "enforced by Faultwall") for f in d["findings"]))
+      and all(f["label"] in ("enforced by Postgres", "not enforced by audit or Postgres grants") for f in d["findings"])
+      and all(f.get("availability") in ("proxy", "partial", "planned") for f in d["findings"] if f["enforced_by"] == "faultwall"))
 sys.exit(0 if ok else 1)
 PY
 
@@ -145,7 +148,9 @@ check "--fix exits 0 (rc=$rc)" test "$rc" = 0
 echo "----- fix.sql -----"; cat "$TMP/fix.sql"; echo "-------------------"
 F="$TMP/fix.sql"
 check "--fix has the Rev 4 header" has "$F" "Generates the database privileges that can be represented natively, and identifies controls that still require Faultwall."
-check "--fix has the 'Still requires Faultwall' section" has "$F" "-- Still requires Faultwall"
+check "--fix has the 'Not enforced by audit or this generated role' section" has "$F" "-- Not enforced by audit or this generated role"
+check "--fix labels the Agents-page path as planned" has "$F" "NOLOGIN (below) is for the planned FaultWall app"
+check "--fix keeps the direct-Postgres alternative" has "$F" "Available now: for an agent that connects to Postgres directly"
 check "--fix: NOLOGIN role" has "$F" "CREATE ROLE fw_agent_e2e NOLOGIN;"
 check "--fix: column grant leaves out password_hash" has "$F" "GRANT SELECT (id, email, name, created_at) ON public.users TO fw_agent_e2e;  -- leaves out password_hash"
 check "--fix: quotes weird names" has "$F" 'GRANT SELECT ON public."Weird Table" TO fw_agent_e2e;'
@@ -154,7 +159,7 @@ check "--fix: no grant to an existing role" bash -c "! grep -E '^GRANT' '$F' | g
 check "--fix: no write grants by default" bash -c "! grep -E '^GRANT' '$F' | grep -qE 'INSERT|UPDATE|DELETE'"
 check "--fix lists rights inherited through PUBLIC (dblink), without REVOKE" has "$F" "-- Still inherited through PUBLIC (affects every role, review with your DBA)"
 check "--fix names dblink* under PUBLIC" bash -c "grep -A6 'Still inherited through PUBLIC' '$F' | grep -q 'dblink\\*'"
-check "--fix Faultwall section describes the new role" has "$F" "These controls can't be written as Postgres grants for fw_agent_e2e (enforced by Faultwall):"
+check "--fix control section describes the new role" has "$F" "Postgres grants can't express these for fw_agent_e2e. Each line says what the FaultWall proxy does today and what is planned:"
 check "--fix Faultwall section does not describe the audited role" bash -c "! grep -q 'fwa_app_user can UPDATE or DELETE every row' '$F'"
 check "--fix notes SELECT * fails on column-granted tables" has "$F" "SELECT * fails for fw_agent_e2e (permission denied)."
 

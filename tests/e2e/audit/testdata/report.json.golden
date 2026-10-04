@@ -127,32 +127,37 @@
     {
       "id": "no_where",
       "enforced_by": "faultwall",
-      "label": "enforced by Faultwall",
-      "text": "Writes without a WHERE clause: app_user can UPDATE or DELETE every row of 4 tables in one statement. A grant can't require a WHERE."
+      "label": "not enforced by audit or Postgres grants",
+      "text": "Writes without a WHERE clause: app_user can UPDATE or DELETE every row of 4 tables in one statement. A grant can't require a WHERE. FaultWall proxy today, in enforce mode: the standard and strict profiles block UPDATE and DELETE without a WHERE.",
+      "availability": "proxy"
     },
     {
       "id": "row_cap",
       "enforced_by": "faultwall",
-      "label": "enforced by Faultwall",
-      "text": "Row-count caps: Postgres has no per-statement limit on rows read or changed."
+      "label": "not enforced by audit or Postgres grants",
+      "text": "Row-count caps: Postgres has no per-statement limit on rows read or changed. FaultWall proxy today: max_rows limits the rows one statement returns. A cap on rows changed is planned, not in this release.",
+      "availability": "partial"
     },
     {
       "id": "approval",
       "enforced_by": "faultwall",
-      "label": "enforced by Faultwall",
-      "text": "Approval before a write: Postgres can't pause a statement until a person approves it."
+      "label": "not enforced by audit or Postgres grants",
+      "text": "Approval before a write: Postgres can't pause a statement until a person approves it. Planned in the FaultWall app, not in this release: writes that pause until a person approves.",
+      "availability": "planned"
     },
     {
       "id": "agent_identity",
       "enforced_by": "faultwall",
-      "label": "enforced by Faultwall",
-      "text": "Per-agent identity on a shared login: every agent that connects as app_user looks the same to Postgres. 3 sessions are open as app_user right now (1 application_name value)."
+      "label": "not enforced by audit or Postgres grants",
+      "text": "Per-agent identity on a shared login: every agent that connects as app_user looks the same to Postgres. 3 sessions are open as app_user right now (1 application_name value). FaultWall proxy today: each agent is named by application_name, with an optional per-agent auth_token. Per-agent keys are planned in the FaultWall app.",
+      "availability": "partial"
     },
     {
       "id": "query_shape",
       "enforced_by": "faultwall",
-      "label": "enforced by Faultwall",
-      "text": "Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one."
+      "label": "not enforced by audit or Postgres grants",
+      "text": "Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one. FaultWall proxy today, in enforce mode: block by operation, table, column and function per agent.",
+      "availability": "proxy"
     }
   ],
   "database": {

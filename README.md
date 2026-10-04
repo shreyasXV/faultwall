@@ -50,9 +50,10 @@ Fixable with Postgres grants (enforced by Postgres)
   - Can read 1 view that reads secret-looking columns: public.user_logins (reads public.users.password_hash).
   ...
 
-Still requires Faultwall (enforced by Faultwall, Postgres can't express these)
-  - Writes without a WHERE clause: app_user can UPDATE or DELETE every row of 42 tables in one statement.
-  - Row-count caps, approval before a write, per-agent identity on a shared login, query-shape rules.
+Not enforced by audit or Postgres grants (what the FaultWall proxy does today, and what is planned)
+  - Writes without a WHERE clause: app_user can UPDATE or DELETE every row of 42 tables in one statement. A grant can't require a WHERE. FaultWall proxy today, in enforce mode: the standard and strict profiles block UPDATE and DELETE without a WHERE.
+  - Row-count caps: FaultWall proxy today: max_rows limits the rows one statement returns. A cap on rows changed is planned, not in this release.
+  - Approval before a write: Planned in the FaultWall app, not in this release.
 ```
 
 `faultwall audit --fix` prints SQL for a new per-agent role (`fw_agent_<name>`) that keeps the reads, leaves out secret columns with column-level grants, and has no writes unless you pass `--writes orders,tickets`. It only prints the SQL. It never runs it, and it never REVOKEs or ALTERs your existing users, so your app keeps working. It also lists what the new role still gets through PUBLIC (for example `dblink` or CREATE on schema `public`) so you can review those with your DBA. `--role NAME` checks another role, `--json` gives machine-readable output.
