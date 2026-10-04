@@ -18,6 +18,47 @@
 
 > **Deterministic. No LLM in the loop.** FaultWall uses the real PostgreSQL C parser (`pg_query_go`) for static SQL analysis — no AI, no API keys, no probabilistic guessing. Every decision is auditable, reproducible, and adds under 1ms of latency.
 
+## Check what your agent's database user can do (30 seconds)
+
+Run this against the database your agent uses. It prints what that login can actually do, using Postgres' own privilege checks (inherited role grants included).
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/shreyasXV/faultwall/main/install.sh | bash   # or: go install github.com/shreyasXV/faultwall@latest
+faultwall audit "$DATABASE_URL"
+```
+
+It checks:
+
+- superuser, BYPASSRLS, CREATEROLE, CREATEDB, REPLICATION, and membership in `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`, `pg_read_all_data`, `pg_write_all_data`
+- per table: SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, ownership (owner can ALTER/DROP), and whether RLS is on and applies to this role
+- secret-looking columns it can SELECT (`password_hash`, `token`, `ssn`, `api_key`...), including column-level grants
+- views it can read that pull from those columns
+- functions it can EXECUTE that reach files, other servers or other sessions (`pg_read_file`, `lo_export`, `dblink*`, `pg_terminate_backend`...), COPY ... PROGRAM, and extensions like `dblink`, `postgres_fdw`, `plpython3u`
+- schemas it can CREATE objects in
+
+Sample output, for a shared `app_user`:
+
+```
+Summary
+  app_user can DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more).
+  Owns 40 (can ALTER/DROP). 1 view reads secret columns. 3 dangerous functions executable (dblink*, pg_cancel_backend, pg_terminate_backend). RLS applies on 0 of 1 RLS tables.
+  Superuser: no. Bypasses RLS: no. Create role: no. Create DB: no. Replication: no.
+
+Fixable with Postgres grants (enforced by Postgres)
+  - DELETE on 42 of 43 tables.
+  - Can SELECT 4 secret-looking columns: public.users.password_hash, public.api_tokens.token, ...
+  - Can read 1 view that reads secret-looking columns: public.user_logins (reads public.users.password_hash).
+  ...
+
+Still requires Faultwall (enforced by Faultwall, Postgres can't express these)
+  - Writes without a WHERE clause: app_user can UPDATE or DELETE every row of 42 tables in one statement.
+  - Row-count caps, approval before a write, per-agent identity on a shared login, query-shape rules.
+```
+
+`faultwall audit --fix` prints SQL for a new per-agent role (`fw_agent_<name>`) that keeps the reads, leaves out secret columns with column-level grants, and has no writes unless you pass `--writes orders,tickets`. It only prints the SQL. It never runs it, and it never REVOKEs or ALTERs your existing users, so your app keeps working. `--role NAME` checks another role, `--json` gives machine-readable output.
+
+Read-only, nothing leaves your machine. The session is set to read-only and runs only catalog queries. There is no telemetry or update check, and no network call besides the one Postgres connection.
+
 ## Works with every managed Postgres
 
 | Deployment | Status |
