@@ -322,25 +322,24 @@ func TestGateMonitorModeOnlyLogs(t *testing.T) {
 	}
 }
 
-// Privacy line: a held statement goes to the control plane as a literal-free
-// shape by default. Full text only when redact_query is explicitly false.
-func TestHeldQueryRedactedByDefault(t *testing.T) {
+// Privacy line (Rev 4): a held statement reaches the control plane only as a
+// literal-free shape. There is no setting or env var that sends full text.
+func TestHeldQueryNeverLeavesAsText(t *testing.T) {
 	pe := &PolicyEngine{pausedAgents: map[string]bool{}, config: &PolicyConfig{Agents: map[string]AgentPolicy{}}}
-	q := "UPDATE users SET email = 'secret-xyz@example.com' WHERE id = 42 /* ticket secret-xyz */"
-	got := queryForControlPlane(pe, q)
-	if strings.Contains(got, "secret-xyz") || strings.Contains(got, "42") {
-		t.Fatalf("default must be shape only, got %q", got)
+	for _, env := range []string{"", "0", "false", "1"} {
+		t.Setenv("FW_HOLD_REDACT_QUERY", env) // legacy knob: must have no effect
+		for _, q := range []string{
+			"UPDATE users SET email = 'secret-xyz@example.com' WHERE id = 42 /* ticket secret-xyz */",
+			"INSERT INTO t (a) VALUES ($$secret-xyz$$)",
+			"DO $body$ BEGIN PERFORM 'secret-xyz'; END $body$",
+		} {
+			got := queryForControlPlane(pe, q)
+			if strings.Contains(got, "secret-xyz") || strings.Contains(got, "42") {
+				t.Fatalf("env=%q: value leaked to control plane: %q", env, got)
+			}
+		}
 	}
-	if !strings.Contains(got, "UPDATE users SET email = ?") {
-		t.Fatalf("shape lost: %q", got)
-	}
-	off := false
-	pe.config.Approvals.RedactQuery = &off
-	if got := queryForControlPlane(pe, q); got != q {
-		t.Fatalf("explicit redact_query=false should send full text, got %q", got)
-	}
-	t.Setenv("FW_HOLD_REDACT_QUERY", "1")
-	if got := queryForControlPlane(pe, q); strings.Contains(got, "secret-xyz") {
-		t.Fatalf("env override must redact: %q", got)
+	if got := queryForControlPlane(pe, "UPDATE users SET email = 'x' WHERE id = 42"); got != "UPDATE users SET email = ? WHERE id = ?" {
+		t.Fatalf("shape: %q", got)
 	}
 }

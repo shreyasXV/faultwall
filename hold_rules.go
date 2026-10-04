@@ -37,13 +37,9 @@ import (
 
 // ApprovalsConfig is the `approvals:` block of policies.yaml.
 type ApprovalsConfig struct {
-	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"` // Go duration, e.g. "120s"
-	Mode    string `yaml:"mode,omitempty" json:"mode,omitempty"`       // "" (enforce mode only) | "always"
-	// RedactQuery: send only the literal-free query shape to the control plane.
-	// Default (nil) = redact, per the privacy line. Full text only when set to
-	// false explicitly; the privacy-safe full-text view is wave 2.
-	RedactQuery *bool      `yaml:"redact_query,omitempty" json:"redact_query,omitempty"`
-	Rules       []HoldRule `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Timeout string     `yaml:"timeout,omitempty" json:"timeout,omitempty"` // Go duration, e.g. "120s"
+	Mode    string     `yaml:"mode,omitempty" json:"mode,omitempty"`       // "" (enforce mode only) | "always"
+	Rules   []HoldRule `yaml:"rules,omitempty" json:"rules,omitempty"`
 }
 
 // HoldRule is one approval rule. Action must be "hold".
@@ -202,20 +198,6 @@ func holdTimeout(pe *PolicyEngine) time.Duration {
 		}
 	}
 	return 120 * time.Second
-}
-
-// holdRedactQuery reports whether a held statement is sent as shape only.
-// Default true: "Query values and results never leave your network."
-func holdRedactQuery(pe *PolicyEngine) bool {
-	if v := os.Getenv("FW_HOLD_REDACT_QUERY"); v != "" {
-		return !(v == "0" || strings.EqualFold(v, "false"))
-	}
-	if pe != nil {
-		if cfg := pe.GetConfig(); cfg != nil && cfg.Approvals.RedactQuery != nil {
-			return *cfg.Approvals.RedactQuery
-		}
-	}
-	return true
 }
 
 // holdAction is one (operation, table) pair a statement performs.

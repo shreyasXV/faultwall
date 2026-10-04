@@ -42,7 +42,8 @@ const AgentKeyPrefix = "fw_ak_"
 // wave 2 (V1-SPEC Rev 4): ask-first compiles to flag here, and the access-
 // request lane turns it into deny + pre-filled request. Pausing happens only
 // for rules an Owner explicitly sets to pause (local approvals.rules / --hold),
-// and those send shape only unless redact_query is explicitly false.
+// and those send the control plane the literal-free shape only (no setting
+// can change that; see hold_cp.go).
 // When this flips to true, holdRules() already feeds ManagedPolicy.HoldRules
 // to the gate.
 var proxyHoldCapable = false

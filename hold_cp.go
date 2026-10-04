@@ -9,11 +9,12 @@ package main
 // (/api/holds) stays live as a fallback, and the proxy's own timeout is
 // authoritative: no answer in time => deny, whatever the network does.
 //
-// PRIVACY: unlike metadata telemetry, a hold carries the statement text, which
-// is what the approver has to see. Set approvals.redact_query: true (or
-// FW_HOLD_REDACT_QUERY=1) to send only the literal-stripped form
-// (pg_query.Normalize: values become $1, $2 …). FAULTWALL_APPROVALS=local
-// keeps holds entirely on the box (local API only).
+// PRIVACY (V1-SPEC Rev 4, no exceptions): a hold sends the control plane only
+// the literal-free query shape, never the statement text or parameter values.
+// "Faultwall's hosted service and Slack do not receive raw statements or
+// parameter values." There is deliberately no setting to change this. Full
+// text is viewable only on the customer's own proxy (wave 2).
+// FAULTWALL_APPROVALS=local keeps holds entirely on the box.
 
 import (
 	"bytes"
@@ -27,7 +28,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 )
 
 // holdCPConfig is set at startup when a control plane is configured.
@@ -101,17 +101,14 @@ func cpDo(ctx context.Context, cfg *ControlPlaneConfig, method, path string, bod
 	return nil
 }
 
-// queryForControlPlane returns the text the approver sees.
-func queryForControlPlane(pe *PolicyEngine, q string) string {
-	if !holdRedactQuery(pe) {
-		return q
-	}
-	// Same literal-free shaper as telemetry (pg_query.Normalize leaves values
-	// in DDL defaults, COMMENT ON, DO bodies and comments).
+// queryForControlPlane returns the only form of a held statement that may
+// leave the box: its literal-free shape. If no safe shape can be produced,
+// a fixed placeholder is sent instead of any part of the text.
+func queryForControlPlane(_ *PolicyEngine, q string) string {
 	if n := normalizeQueryShape(q); n != "" {
 		return n
 	}
-	return "(query text withheld: the statement could not be reduced to a literal-free shape)"
+	return "(statement withheld: it could not be reduced to a literal-free shape)"
 }
 
 // startHoldControlPlane posts the hold and long-polls for a decision in the

@@ -9,7 +9,6 @@ from Slack, or from the local API.
 approvals:
   timeout: 120s          # no decision in time = deny (default 120s; FW_HOLD_TIMEOUT overrides)
   # mode: always         # also hold in monitor mode (default: holds only in enforce mode)
-  # redact_query: true   # send only the literal-stripped statement to the control plane
   rules:
     - name: writes-to-orders
       action: hold
@@ -71,10 +70,11 @@ Env shorthand: `FW_HOLD_RULES='UPDATE,DELETE:orders;WRITE@support-agent'`.
 
 `FAULTWALL_APPROVALS=local` keeps holds on the box (no control plane).
 
-**Privacy:** a hold sends the statement text to the control plane, because the
-approver must see what they're approving. This is the one exception to
-metadata-only telemetry, and it only applies to statements that matched a hold
-rule. Use `redact_query: true` to send the literal-stripped form instead.
+**Privacy:** a hold sends the control plane (and Slack) only the literal-free
+query shape, e.g. `UPDATE users SET email = ? WHERE id = ?`, plus agent,
+table, operation and rule. Faultwall's hosted service and Slack do not receive
+raw statements or parameter values. There is no setting to change this. Viewing
+the full statement is only possible on the customer-run proxy (planned).
 
 ## Tests
 
