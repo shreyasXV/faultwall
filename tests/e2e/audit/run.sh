@@ -91,7 +91,7 @@ check "audit exits 0 with network off + proxy vars set (rc=$rc, ${AUDIT_SECS}s)"
 cat "$TMP/err.txt"
 echo "----- output -----"; cat "$TMP/out.txt"; echo "------------------"
 O="$TMP/out.txt"
-check "summary: DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42" has "$O" "fwa_app_user can DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more)."
+check "summary: DELETE on 42 of 43 tables, UPDATE 42, INSERT 42, TRUNCATE 42" has "$O" "fwa_app_user can DELETE on 42 of 43 tables, UPDATE 42, INSERT 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more)."
 check "summary: owns 40 (can ALTER/DROP), 1 view reads secret columns" has "$O" "Owns 40 (can ALTER/DROP). 1 view reads secret columns."
 check "summary: superuser/bypass RLS line" has "$O" "Superuser: no. Bypasses RLS: no. Create role: no. Create DB: no. Replication: no."
 check "summary is the first block (3 lines after the header)" bash -c "sed -n '4p' '$O' | grep -qx Summary && sed -n '7p' '$O' | grep -q '^  Superuser: no'"
@@ -102,7 +102,7 @@ check "RLS on tenant_notes reported as not applied (owner)" has "$O" "RLS is on 
 check "CREATE in schema public reported" has "$O" "Can CREATE objects (tables, functions) in schema public."
 check "membership in fwa_readers shown" has "$O" "member of: fwa_readers"
 if [ "$DBLINK" = 1 ]; then
-  check "dblink* reported as executable" has "$O" "Can EXECUTE 3 dangerous functions: dblink*, pg_cancel_backend, pg_terminate_backend."
+  check "dblink* reported as executable (own-session signal functions not flagged)" has "$O" "Can EXECUTE 1 dangerous function: dblink*."
   check "dblink extension reported" has "$O" "Extensions that reach outside the database are installed: dblink."
 fi
 check "label: enforced by Postgres" has "$O" "(enforced by Postgres)"
@@ -110,8 +110,8 @@ check "label: enforced by Faultwall" has "$O" "(enforced by Faultwall, Postgres 
 for c in "Writes without a WHERE clause" "Row-count caps" "Approval before a write" "Per-agent identity on a shared login" "Query-shape rules"; do
   check "Faultwall control listed: $c" has "$O" "  - $c"
 done
-check "last line is the one CTA" bash -c "[ \"\$(tail -n1 '$O')\" = \"Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read\" ]"
-check "CTA URL appears exactly once" bash -c "[ \$(grep -c 'faultwall.com/read' '$O') = 1 ]"
+check "last line is the one CTA" bash -c "[ \"\$(tail -n1 '$O')\" = \"Want this for your agent's real traffic? Free 48h read: https://faultwall.com\" ]"
+check "CTA URL appears exactly once" bash -c "[ \$(grep -c 'Free 48h read: https://faultwall.com' '$O') = 1 ]"
 check "no em/en dashes" bash -c "! LC_ALL=C grep -q \$'\xe2\x80\x94\|\xe2\x80\x93' '$O'"
 check "no hype words" bash -c "! grep -qiwE 'comprehensive|robust|seamless|seamlessly|powerful|effortless|cutting-edge|revolutionary' '$O'"
 check "no emoji (ASCII only)" bash -c "! LC_ALL=C grep -q '[^ -~]' '$O'"
@@ -119,7 +119,7 @@ check "under 60s on the fixture" perl -e "exit !($AUDIT_SECS < 60)"
 
 echo "== --role (connect as admin, check fwa_app_user)"
 "$BIN" audit "$ADMIN_URL" --role fwa_app_user > "$TMP/role.txt" 2>&1
-check "--role gives the same summary as connecting as the role" has "$TMP/role.txt" "fwa_app_user can DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42, and read 4 secret columns"
+check "--role gives the same summary as connecting as the role" has "$TMP/role.txt" "fwa_app_user can DELETE on 42 of 43 tables, UPDATE 42, INSERT 42, TRUNCATE 42, and read 4 secret columns"
 check "--role says which login it connected as" has "$TMP/role.txt" "Connected as $PGUSER, checking role fwa_app_user."
 
 echo "== DATABASE_URL"
@@ -134,7 +134,7 @@ d = json.load(open(sys.argv[1]))
 s = d["summary"]
 ok = (d["schema_version"] == 1 and d["role"]["name"] == "fwa_app_user" and s["tables"] == 43 and s["delete"] == 42
       and s["truncate"] == 42 and s["owned"] == 40 and s["secret_columns_readable"] == 4 and s["sensitive_views_readable"] == 1
-      and d["cta"].endswith("https://faultwall.com/read")
+      and d["cta"].endswith("https://faultwall.com")
       and all(f["label"] in ("enforced by Postgres", "enforced by Faultwall") for f in d["findings"]))
 sys.exit(0 if ok else 1)
 PY
@@ -152,6 +152,11 @@ check "--fix: quotes weird names" has "$F" 'GRANT SELECT ON public."Weird Table"
 check "--fix: never REVOKE / ALTER / DROP (anywhere, comments included)" bash -c "! grep -qiE 'REVOKE|ALTER|DROP' '$F'"
 check "--fix: no grant to an existing role" bash -c "! grep -E '^GRANT' '$F' | grep -qE 'TO (fwa_app_user|fwa_admin|fwa_readers|fwa_proxy)'"
 check "--fix: no write grants by default" bash -c "! grep -E '^GRANT' '$F' | grep -qE 'INSERT|UPDATE|DELETE'"
+check "--fix lists rights inherited through PUBLIC (dblink), without REVOKE" has "$F" "-- Still inherited through PUBLIC (affects every role, review with your DBA)"
+check "--fix names dblink* under PUBLIC" bash -c "grep -A6 'Still inherited through PUBLIC' '$F' | grep -q 'dblink\\*'"
+check "--fix Faultwall section describes the new role" has "$F" "These controls can't be written as Postgres grants for fw_agent_e2e (enforced by Faultwall):"
+check "--fix Faultwall section does not describe the audited role" bash -c "! grep -q 'fwa_app_user can UPDATE or DELETE every row' '$F'"
+check "--fix notes SELECT * fails on column-granted tables" has "$F" "SELECT * fails for fw_agent_e2e (permission denied)."
 
 "$BIN" audit "$URL" --fix --agent e2e_w --writes tickets --proxy-role fwa_proxy > "$TMP/fixw.sql" 2>&1
 check "--fix --writes tickets grants writes on tickets only" bash -c "grep -q '^GRANT INSERT, UPDATE, DELETE ON public.tickets TO fw_agent_e2e_w;' '$TMP/fixw.sql' && [ \$(grep -cE '^GRANT (INSERT|DELETE)' '$TMP/fixw.sql') = 1 ]"
@@ -178,6 +183,7 @@ check "new role can't SELECT api_tokens.token / billing.invoices.card_token" bas
 check "new role can't DELETE" bash -c "psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e' -c 'DELETE FROM orders' 2>&1 | grep -q 'permission denied'"
 check "new role can't UPDATE / TRUNCATE / DROP" bash -c "psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e' -c 'UPDATE tickets SET status = 1::text' 2>&1 | grep -q 'permission denied' && psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e' -c 'TRUNCATE filler_01' 2>&1 | grep -q 'permission denied' && psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e' -c 'DROP TABLE filler_01' 2>&1 | grep -q 'must be owner'"
 check "new role can't CREATE in public" bash -c "psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e' -c 'CREATE TABLE x (i int)' 2>&1 | grep -q 'permission denied'"
+check "the PUBLIC listing is true: new role can really EXECUTE dblink" bash -c "psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e' -c \"SELECT has_function_privilege('dblink(text,text)', 'EXECUTE')\" 2>&1 | grep -qx t"
 check "--writes role can INSERT/DELETE on tickets" bash -c "psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e_w' -c \"INSERT INTO tickets (subject, body, status) VALUES ('s','b','open')\" -c 'DELETE FROM tickets WHERE id = 1' >/dev/null 2>&1"
 check "--writes role still can't DELETE on orders" bash -c "psql -X -q -At -d fwa_scratch_copy -c 'SET ROLE fw_agent_e2e_w' -c 'DELETE FROM orders' 2>&1 | grep -q 'permission denied'"
 check "proxy login can switch to the --writes role" bash -c "psql -X -q -At -d fwa_scratch_copy -U fwa_proxy -c 'SET ROLE fw_agent_e2e_w' -c 'SELECT current_user' 2>&1 | grep -qx fw_agent_e2e_w"
