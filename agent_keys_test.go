@@ -351,12 +351,18 @@ func TestKeyPasswordAuthWire(t *testing.T) {
 	}
 }
 
-// With hold support (this build), an "ask first" managed rule reaches the hold
-// gate via holdRules() and is not degraded to flag.
-func TestManagedHoldRulesReachGate(t *testing.T) {
-	if !proxyHoldCapable {
-		t.Fatal("this build must advertise hold support")
+// Ask-first must NOT pause by default before wave 2 (V1-SPEC Rev 4).
+func TestAskFirstDoesNotPauseByDefault(t *testing.T) {
+	if proxyHoldCapable {
+		t.Fatal("control-plane ask-first must not pause before wave 2; it compiles to flag")
 	}
+}
+
+// When hold support is switched on (wave 2), a managed "ask first" rule
+// reaches the hold gate via holdRules() and is not degraded to flag.
+func TestManagedHoldRulesReachGate(t *testing.T) {
+	defer func(old bool) { proxyHoldCapable = old }(proxyHoldCapable)
+	proxyHoldCapable = true
 	pe := &PolicyEngine{enforcement: "enforce", pausedAgents: map[string]bool{}, config: &PolicyConfig{Agents: map[string]AgentPolicy{}}}
 	m, err := parseManagedPolicy("v1", testAgentsYAML, nil)
 	if err != nil {

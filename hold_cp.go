@@ -28,7 +28,6 @@ import (
 	"sync"
 	"time"
 
-	pg_query "github.com/pganalyze/pg_query_go/v6"
 )
 
 // holdCPConfig is set at startup when a control plane is configured.
@@ -107,10 +106,12 @@ func queryForControlPlane(pe *PolicyEngine, q string) string {
 	if !holdRedactQuery(pe) {
 		return q
 	}
-	if n, err := pg_query.Normalize(q); err == nil {
+	// Same literal-free shaper as telemetry (pg_query.Normalize leaves values
+	// in DDL defaults, COMMENT ON, DO bodies and comments).
+	if n := normalizeQueryShape(q); n != "" {
 		return n
 	}
-	return "(query text withheld: redact_query is on and the statement could not be normalized)"
+	return "(query text withheld: the statement could not be reduced to a literal-free shape)"
 }
 
 // startHoldControlPlane posts the hold and long-polls for a decision in the

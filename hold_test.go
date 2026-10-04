@@ -321,3 +321,26 @@ func TestGateMonitorModeOnlyLogs(t *testing.T) {
 		t.Fatal("monitor mode must not pause (would-hold only)")
 	}
 }
+
+// Privacy line: a held statement goes to the control plane as a literal-free
+// shape by default. Full text only when redact_query is explicitly false.
+func TestHeldQueryRedactedByDefault(t *testing.T) {
+	pe := &PolicyEngine{pausedAgents: map[string]bool{}, config: &PolicyConfig{Agents: map[string]AgentPolicy{}}}
+	q := "UPDATE users SET email = 'secret-xyz@example.com' WHERE id = 42 /* ticket secret-xyz */"
+	got := queryForControlPlane(pe, q)
+	if strings.Contains(got, "secret-xyz") || strings.Contains(got, "42") {
+		t.Fatalf("default must be shape only, got %q", got)
+	}
+	if !strings.Contains(got, "UPDATE users SET email = ?") {
+		t.Fatalf("shape lost: %q", got)
+	}
+	off := false
+	pe.config.Approvals.RedactQuery = &off
+	if got := queryForControlPlane(pe, q); got != q {
+		t.Fatalf("explicit redact_query=false should send full text, got %q", got)
+	}
+	t.Setenv("FW_HOLD_REDACT_QUERY", "1")
+	if got := queryForControlPlane(pe, q); strings.Contains(got, "secret-xyz") {
+		t.Fatalf("env override must redact: %q", got)
+	}
+}

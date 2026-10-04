@@ -37,9 +37,12 @@ import (
 
 // ApprovalsConfig is the `approvals:` block of policies.yaml.
 type ApprovalsConfig struct {
-	Timeout     string     `yaml:"timeout,omitempty" json:"timeout,omitempty"`           // Go duration, e.g. "120s"
-	Mode        string     `yaml:"mode,omitempty" json:"mode,omitempty"`                 // "" (enforce mode only) | "always"
-	RedactQuery bool       `yaml:"redact_query,omitempty" json:"redact_query,omitempty"` // send only the literal-stripped query to the control plane
+	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"` // Go duration, e.g. "120s"
+	Mode    string `yaml:"mode,omitempty" json:"mode,omitempty"`       // "" (enforce mode only) | "always"
+	// RedactQuery: send only the literal-free query shape to the control plane.
+	// Default (nil) = redact, per the privacy line. Full text only when set to
+	// false explicitly; the privacy-safe full-text view is wave 2.
+	RedactQuery *bool      `yaml:"redact_query,omitempty" json:"redact_query,omitempty"`
 	Rules       []HoldRule `yaml:"rules,omitempty" json:"rules,omitempty"`
 }
 
@@ -201,16 +204,18 @@ func holdTimeout(pe *PolicyEngine) time.Duration {
 	return 120 * time.Second
 }
 
+// holdRedactQuery reports whether a held statement is sent as shape only.
+// Default true: "Query values and results never leave your network."
 func holdRedactQuery(pe *PolicyEngine) bool {
 	if v := os.Getenv("FW_HOLD_REDACT_QUERY"); v != "" {
-		return v == "1" || strings.EqualFold(v, "true")
+		return !(v == "0" || strings.EqualFold(v, "false"))
 	}
 	if pe != nil {
-		if cfg := pe.GetConfig(); cfg != nil {
-			return cfg.Approvals.RedactQuery
+		if cfg := pe.GetConfig(); cfg != nil && cfg.Approvals.RedactQuery != nil {
+			return *cfg.Approvals.RedactQuery
 		}
 	}
-	return false
+	return true
 }
 
 // holdAction is one (operation, table) pair a statement performs.
@@ -236,7 +241,7 @@ func holdActions(query string, pq *ParsedQuery) []holdAction {
 		}
 	}
 	walked := false
-	if js, err := pg_query.ParseToJSON(stripLeadingSET(sanitizeQuery(query))); err == nil {
+	if js, err := pg_query.ParseToJSON(sanitizeQuery(query)); err == nil { // full batch: a write after a leading SET is still walked
 		var tree interface{}
 		if json.Unmarshal([]byte(js), &tree) == nil {
 			walked = true
