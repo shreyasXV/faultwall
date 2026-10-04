@@ -23,8 +23,8 @@
 Run this against the database your agent uses. It prints what that login can actually do, using Postgres' own privilege checks (inherited role grants included).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/shreyasXV/faultwall/main/install.sh | bash   # or: go install github.com/shreyasXV/faultwall@latest
-faultwall audit "$DATABASE_URL"
+curl -fsSL https://raw.githubusercontent.com/shreyasXV/faultwall/main/try.sh | FAULTWALL_NO_RUN=1 bash   # installs to ~/.faultwall/bin, no sudo
+~/.faultwall/bin/faultwall audit "$DATABASE_URL"
 ```
 
 It checks:
@@ -33,15 +33,15 @@ It checks:
 - per table: SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, ownership (owner can ALTER/DROP), and whether RLS is on and applies to this role
 - secret-looking columns it can SELECT (`password_hash`, `token`, `ssn`, `api_key`...), including column-level grants
 - views it can read that pull from those columns
-- functions it can EXECUTE that reach files, other servers or other sessions (`pg_read_file`, `lo_export`, `dblink*`, `pg_terminate_backend`...), COPY ... PROGRAM, and extensions like `dblink`, `postgres_fdw`, `plpython3u`
+- functions it can EXECUTE that reach files, other servers or other sessions (`pg_read_file`, `lo_export`, `dblink*`, and `pg_terminate_backend` when it has `pg_signal_backend`), COPY ... PROGRAM, and extensions like `dblink`, `postgres_fdw`, `plpython3u`
 - schemas it can CREATE objects in
 
 Sample output, for a shared `app_user`:
 
 ```
 Summary
-  app_user can DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more).
-  Owns 40 (can ALTER/DROP). 1 view reads secret columns. 3 dangerous functions executable (dblink*, pg_cancel_backend, pg_terminate_backend). RLS applies on 0 of 1 RLS tables.
+  app_user can DELETE on 42 of 43 tables, UPDATE 42, INSERT 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more).
+  Owns 40 (can ALTER/DROP). 1 view reads secret columns. 1 dangerous function executable (dblink*). RLS applies on 0 of 1 RLS tables.
   Superuser: no. Bypasses RLS: no. Create role: no. Create DB: no. Replication: no.
 
 Fixable with Postgres grants (enforced by Postgres)
@@ -55,7 +55,7 @@ Still requires Faultwall (enforced by Faultwall, Postgres can't express these)
   - Row-count caps, approval before a write, per-agent identity on a shared login, query-shape rules.
 ```
 
-`faultwall audit --fix` prints SQL for a new per-agent role (`fw_agent_<name>`) that keeps the reads, leaves out secret columns with column-level grants, and has no writes unless you pass `--writes orders,tickets`. It only prints the SQL. It never runs it, and it never REVOKEs or ALTERs your existing users, so your app keeps working. `--role NAME` checks another role, `--json` gives machine-readable output.
+`faultwall audit --fix` prints SQL for a new per-agent role (`fw_agent_<name>`) that keeps the reads, leaves out secret columns with column-level grants, and has no writes unless you pass `--writes orders,tickets`. It only prints the SQL. It never runs it, and it never REVOKEs or ALTERs your existing users, so your app keeps working. It also lists what the new role still gets through PUBLIC (for example `dblink` or CREATE on schema `public`) so you can review those with your DBA. `--role NAME` checks another role, `--json` gives machine-readable output.
 
 Read-only, nothing leaves your machine. The session is set to read-only and runs only catalog queries. There is no telemetry or update check, and no network call besides the one Postgres connection.
 
