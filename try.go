@@ -55,6 +55,7 @@ type tryOptions struct {
 	// Empty: fall back to FAULTWALL_CONTROL_PLANE_URL/_TOKEN or ~/.faultwall/config.toml.
 	CPToken string
 	CPURL   string
+	Hold    string // --hold rule spec: pause matching statements for approval
 }
 
 func inContainer() bool {
@@ -88,7 +89,7 @@ func parseTryArgs(args []string, getenv func(string) string) (*tryOptions, error
 			o.DemoAgent = false
 		case a == "--no-open":
 			o.Open = false
-		case a == "--listen", a == "--port", a == "--ui-port", a == "--agent", a == "--db", a == "--for", a == "--token", a == "--control-plane":
+		case a == "--listen", a == "--port", a == "--ui-port", a == "--agent", a == "--db", a == "--for", a == "--token", a == "--control-plane", a == "--hold":
 			v, err := next()
 			if err != nil {
 				return nil, err
@@ -127,6 +128,11 @@ func parseTryArgs(args []string, getenv func(string) string) (*tryOptions, error
 					return nil, fmt.Errorf("--control-plane must be an http(s):// URL, got %q", v)
 				}
 				o.CPURL = strings.TrimRight(v, "/")
+			case "--hold":
+				if _, err := parseHoldSpec(v); err != nil {
+					return nil, err
+				}
+				o.Hold = v
 			case "--for":
 				d, err := time.ParseDuration(v)
 				if err != nil {
@@ -190,6 +196,10 @@ Flags:
   --no-demo-agent    Demo Postgres only, no scripted agent
   --no-open          Don't open the browser
   --for DURATION     Exit after DURATION (e.g. 2m); default runs until Ctrl+C
+  --hold RULES       Pause matching statements until you approve them in the live view
+                     (or POST /api/holds/{id}/approve|deny). RULES = OPS[:TABLES][@AGENTS];...
+                     e.g. --hold 'UPDATE,DELETE:orders'  --hold 'WRITE@support-bot'
+                     No decision within 120s (FW_HOLD_TIMEOUT) = denied.
   --token TOKEN      Control-plane token: also send activity metadata to your hosted
                      dashboard (query values never leave your box)
   --control-plane URL  Control-plane URL for --token (e.g. https://api.faultwall.com)
@@ -628,6 +638,8 @@ func tryMux(info *tryInfo) *http.ServeMux {
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]interface{}{"status": "ok", "mode": "try"})
 	})
+	mux.HandleFunc("/api/holds", handleHolds)
+	mux.HandleFunc("/api/holds/", handleHoldAction)
 	mux.HandleFunc("/api/firewall/agents", handleFirewallAgents)
 	mux.HandleFunc("/api/violations", handleViolations)
 	mux.HandleFunc("/api/policies", handlePolicies)
@@ -784,6 +796,12 @@ func runTry(args []string) error {
 
 	// Globals the proxy + API handlers use.
 	policyEngine = tryPolicyEngine()
+	if opts.Hold != "" {
+		rules, _ := parseHoldSpec(opts.Hold)
+		envHoldRules = append(envHoldRules, rules...)
+		envHoldMode = "always" // an explicit --hold opts in to pausing, even in monitor mode
+		initHoldControlPlane()
+	}
 	agentTracker = NewAgentTracker()
 	tryActivity = NewTryActivityStore(1000)
 	// Same enroll config as --proxy (FAULTWALL_CONTROL_PLANE_URL/_TOKEN env or
@@ -867,6 +885,9 @@ func runTry(args []string) error {
 	fmt.Printf("  %sUpstream:%s        %s (%s)\n", colorBold, colorReset, target.Addr(), tlsNote)
 	fmt.Printf("  %sEvents go to:%s    %s\n", colorBold, colorReset, tryTelemetryBanner(tc))
 	fmt.Printf("  %sFlags (no YAML):%s DDL · UPDATE/DELETE without WHERE · writes >100 rows · secret-column reads\n", colorBold, colorReset)
+	if opts.Hold != "" {
+		fmt.Printf("  %sApprovals:%s       holding %q for approval (deny after %s). Approve at %s/api/holds\n", colorBold, colorReset, opts.Hold, holdTimeout(policyEngine), uiURL)
+	}
 	fmt.Println()
 	if opts.Demo && opts.DemoAgent {
 		fmt.Println("  Demo agents 'support-bot' and 'analytics-agent' are querying through FaultWall now.")

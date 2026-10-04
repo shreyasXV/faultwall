@@ -37,11 +37,11 @@ import (
 // AgentKeyPrefix marks control-plane issued agent keys.
 const AgentKeyPrefix = "fw_ak_"
 
-// proxyHoldCapable is advertised to the control plane. When false (this
-// build), "ask first" toggles are compiled to action: flag — the statement
-// runs, and is logged + flagged as needing approval. The approvals lane flips
-// this once hold-at-Execute ships, and consumes ManagedPolicy.HoldRules.
-var proxyHoldCapable = false
+// proxyHoldCapable is advertised to the control plane. This build has
+// hold-at-Execute (hold_gate.go), so "ask first" toggles compile to
+// action: hold and arrive as ManagedPolicy.HoldRules, which holdRules()
+// feeds to the gate alongside policy-file and env rules.
+var proxyHoldCapable = true
 
 // AgentKeyEntry is one issued key, by hash.
 type AgentKeyEntry struct {
@@ -474,6 +474,13 @@ func handleAgentKeysStatus(w http.ResponseWriter, r *http.Request) {
 // SetManaged installs control-plane managed agents over the local policy.
 // Copy-on-write: a fresh PolicyConfig with a fresh Agents map is swapped in,
 // so concurrent readers holding the old pointer are never mutated under.
+// managedPolicy returns the current control-plane policy (nil if none).
+func (pe *PolicyEngine) managedPolicy() *ManagedPolicy {
+	pe.mu.RLock()
+	defer pe.mu.RUnlock()
+	return pe.managed
+}
+
 func (pe *PolicyEngine) SetManaged(m *ManagedPolicy) {
 	pe.mu.Lock()
 	defer pe.mu.Unlock()

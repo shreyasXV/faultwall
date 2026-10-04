@@ -216,6 +216,10 @@ func main() {
 			policySyncer = NewPolicySyncer(cpCfg.URL, cpCfg.Token, policyEngine, agentKeys)
 			policySyncer.Start()
 		}
+		initHoldControlPlane()
+		if rules, mode := holdRules(policyEngine); len(rules) > 0 {
+			log.Printf("✋ Approvals: %d hold rule(s), timeout %s (default deny), enforced=%v", len(rules), holdTimeout(policyEngine), holdsEnforced(policyEngine, mode))
+		}
 
 		// Self-disabling feature guards (see guards.go). Each guard runs a
 		// startup self-check; if the check fails, the new behavior turns
@@ -283,6 +287,8 @@ func main() {
 		mux.HandleFunc("/api/policies/reload", handlePoliciesReload)
 		mux.HandleFunc("/api/agent-keys", handleAgentKeysStatus)
 		mux.HandleFunc("/api/violations", handleViolations)
+		mux.HandleFunc("/api/holds", bearerAuthMiddleware(handleHolds))
+		mux.HandleFunc("/api/holds/", bearerAuthMiddleware(handleHoldAction))
 		mux.HandleFunc("/api/qwm/flags", handleQWMFlags)
 		mux.HandleFunc("/api/apa/proposals", handleAPAProposals)
 		mux.HandleFunc("/api/apa/proposals/files", handleAPAProposalFiles)
@@ -549,6 +555,8 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 	mux.HandleFunc("/api/rules/create", bearerAuthMiddleware(handleRuleCreate))
 	mux.HandleFunc("/api/agents/pause/", bearerAuthMiddleware(handlePauseAgent))
 	mux.HandleFunc("/api/agents/stats", handleAgentStats)
+	mux.HandleFunc("/api/holds", bearerAuthMiddleware(handleHolds))
+	mux.HandleFunc("/api/holds/", bearerAuthMiddleware(handleHoldAction))
 
 	// Export
 	mux.HandleFunc("/api/export/csv", handleExportCSV)

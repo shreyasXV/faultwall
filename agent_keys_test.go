@@ -134,12 +134,15 @@ func TestManagedOverlayAndFlagRules(t *testing.T) {
 			"local": {Profile: "permissive"},
 		}},
 	}
+	// This test covers the flag path, so simulate a proxy without hold support.
+	defer func(old bool) { proxyHoldCapable = old }(proxyHoldCapable)
+	proxyHoldCapable = false
 	m, err := parseManagedPolicy("v1", testAgentsYAML, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(m.FlagRules) != 1 || len(m.HoldRules) != 0 {
-		t.Fatalf("hold must degrade to flag on this build: %+v", m)
+		t.Fatalf("hold must degrade to flag without hold support: %+v", m)
 	}
 	pe.SetManaged(m)
 	cfg := pe.GetConfig()
@@ -345,5 +348,30 @@ func TestKeyPasswordAuthWire(t *testing.T) {
 	}
 	if pw := <-gotPassword; pw != "upstream-secret" {
 		t.Fatalf("upstream password = %q (agent key must never be forwarded)", pw)
+	}
+}
+
+// With hold support (this build), an "ask first" managed rule reaches the hold
+// gate via holdRules() and is not degraded to flag.
+func TestManagedHoldRulesReachGate(t *testing.T) {
+	if !proxyHoldCapable {
+		t.Fatal("this build must advertise hold support")
+	}
+	pe := &PolicyEngine{enforcement: "enforce", pausedAgents: map[string]bool{}, config: &PolicyConfig{Agents: map[string]AgentPolicy{}}}
+	m, err := parseManagedPolicy("v1", testAgentsYAML, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.HoldRules) != 1 || len(m.FlagRules) != 0 {
+		t.Fatalf("hold rule should stay hold: %+v", m)
+	}
+	pe.SetManaged(m)
+	rules, _ := holdRules(pe)
+	hm := matchHoldRules(rules, "support-agent", "UPDATE orders SET status = 'x' WHERE id = 1", ParseQuery("UPDATE orders SET status = 'x' WHERE id = 1"))
+	if hm == nil {
+		t.Fatalf("managed ask-first write not held; rules=%+v", rules)
+	}
+	if hm := matchHoldRules(rules, "support-agent", "SELECT 1", ParseQuery("SELECT 1")); hm != nil {
+		t.Fatal("read must not be held")
 	}
 }
