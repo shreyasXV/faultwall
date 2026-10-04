@@ -1,0 +1,253 @@
+faultwall audit e2e  2026-10-04T08:28:39Z  postgres=127.0.0.1:5544
+git 3de465a
+== build
+server: PostgreSQL 16.13 (Homebrew) on aarch64-apple-darwin25.2.0, compiled by Apple clang version 17.0.0 (clang-1700.6.3.2), 64-bit
+== fixture
+dblink installed: 1
+tables in fixture: 43
+PASS  sandbox blocks outbound network (curl to example.com refused)
+== read-only: schema + grants snapshot before
+== faultwall audit (as fwa_app_user, network off, HTTP proxy vars pointed at a dead port)
+PASS  audit exits 0 with network off + proxy vars set (rc=0, 0.31s)
+----- output -----
+faultwall audit: role fwa_app_user on database fwa_scratch at 127.0.0.1:5544 (PostgreSQL 16.13 (Homebrew))
+Read-only: nothing was changed. No network calls besides this database connection.
+
+Summary
+  fwa_app_user can DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42, and read 4 secret columns (users.password_hash, api_tokens.token, customers.ssn, +1 more).
+  Owns 40 (can ALTER/DROP). 1 view reads secret columns. 3 dangerous functions executable (dblink*, pg_cancel_backend, pg_terminate_backend). RLS applies on 0 of 1 RLS tables.
+  Superuser: no. Bypasses RLS: no. Create role: no. Create DB: no. Replication: no.
+
+Fixable with Postgres grants (enforced by Postgres)
+  - DELETE on 42 of 43 tables.
+  - UPDATE on 42 of 43 tables.
+  - INSERT on 42 of 43 tables.
+  - TRUNCATE on 42 of 43 tables: billing.invoices, billing.payouts, public.Weird Table, public.api_tokens, public.customers, +37 more.
+  - Owns 40 of 43 tables, so it can ALTER or DROP them and change their grants.
+  - TRIGGER on 40 tables: it can attach code that runs on other users' writes.
+  - RLS is on for 1 table but does not apply to fwa_app_user on 1: public.tenant_notes (owner).
+  - Can SELECT 4 secret-looking columns: public.users.password_hash, public.api_tokens.token, public.customers.ssn, billing.invoices.card_token.
+  - Can read 1 view that reads secret-looking columns: public.user_logins (reads public.users.password_hash). Mark these sensitive too.
+  - Can EXECUTE 3 dangerous functions: dblink*, pg_cancel_backend, pg_terminate_backend.
+  - Extensions that reach outside the database are installed: dblink.
+  - Can CREATE objects (tables, functions) in schema public.
+  Run faultwall audit --fix for SQL that creates a narrower role for one agent.
+
+Still requires Faultwall (enforced by Faultwall, Postgres can't express these)
+  - Writes without a WHERE clause: fwa_app_user can UPDATE or DELETE every row of 42 tables in one statement. A grant can't require a WHERE.
+  - Row-count caps: Postgres has no per-statement limit on rows read or changed.
+  - Approval before a write: Postgres can't pause a statement until a person approves it.
+  - Per-agent identity on a shared login: every agent that connects as fwa_app_user looks the same to Postgres.
+  - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one.
+
+Role
+  member of: fwa_readers
+  built-in roles: pg_read_server_files=no pg_write_server_files=no pg_execute_server_program=no pg_read_all_data=no pg_write_all_data=no pg_signal_backend=no
+  COPY ... PROGRAM: no. Read server files: no. Write server files: no.
+
+Tables (43, riskiest 20 shown, --all for every table)
+  table                privileges                                               owner           RLS              secret columns
+  public.Weird Table   SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.api_tokens    SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              token
+  public.customers     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              ssn
+  public.filler_01     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_02     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_03     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_04     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_05     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_06     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_07     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_08     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_09     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_10     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_11     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_12     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_13     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_14     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.filler_15     SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              -
+  public.tenant_notes  SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  on, not applied  -
+  public.users         SELECT INSERT UPDATE DELETE TRUNCATE REFERENCES TRIGGER  yes (can DROP)  off              password_hash
+
+Secret-looking columns (4 found, 4 readable)
+  public.users.password_hash: SELECT, UPDATE
+  public.api_tokens.token: SELECT, UPDATE
+  public.customers.ssn: SELECT, UPDATE
+  billing.invoices.card_token: SELECT, UPDATE
+
+Views that read secret-looking columns (1 readable)
+  public.user_logins reads public.users.password_hash
+
+Dangerous functions it can EXECUTE (3)
+  dblink*, pg_cancel_backend, pg_terminate_backend
+
+Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read
+------------------
+PASS  summary: DELETE on 42 of 43 tables, UPDATE 42, TRUNCATE 42
+PASS  summary: owns 40 (can ALTER/DROP), 1 view reads secret columns
+PASS  summary: superuser/bypass RLS line
+PASS  summary is the first block (3 lines after the header)
+PASS  secret columns listed schema.table.column
+PASS  billing.invoices.card_token readable via inherited role fwa_readers
+PASS  view over users.password_hash listed
+PASS  RLS on tenant_notes reported as not applied (owner)
+PASS  CREATE in schema public reported
+PASS  membership in fwa_readers shown
+PASS  dblink* reported as executable
+PASS  dblink extension reported
+PASS  label: enforced by Postgres
+PASS  label: enforced by Faultwall
+PASS  Faultwall control listed: Writes without a WHERE clause
+PASS  Faultwall control listed: Row-count caps
+PASS  Faultwall control listed: Approval before a write
+PASS  Faultwall control listed: Per-agent identity on a shared login
+PASS  Faultwall control listed: Query-shape rules
+PASS  last line is the one CTA
+PASS  CTA URL appears exactly once
+PASS  no em/en dashes
+PASS  no hype words
+PASS  no emoji (ASCII only)
+PASS  under 60s on the fixture
+== --role (connect as admin, check fwa_app_user)
+PASS  --role gives the same summary as connecting as the role
+PASS  --role says which login it connected as
+== DATABASE_URL
+PASS  uses DATABASE_URL when no URL is given
+== --json
+PASS  --json is valid and has the same numbers
+== --fix
+PASS  --fix exits 0 (rc=0)
+----- fix.sql -----
+-- faultwall audit --fix: new per-agent role fw_agent_e2e
+-- Generates the database privileges that can be represented natively, and identifies controls that still require Faultwall.
+-- Based on what fwa_app_user can read in database fwa_scratch. Printed only, nothing was run.
+-- Run it as an admin after reading it. It creates one new role and grants to it.
+-- It does not change fwa_app_user or any other existing role, so your app keeps working.
+-- Secret-looking columns are left out with column-level grants. Views that read them are left out.
+
+BEGIN;
+
+-- 1. The role. NOLOGIN: FaultWall's proxy switches to it (db_role on the Agents page).
+--    For an agent that connects to Postgres directly instead, use this line in place of the next one:
+--    CREATE ROLE fw_agent_e2e LOGIN PASSWORD 'choose-a-long-random-password';
+CREATE ROLE fw_agent_e2e NOLOGIN;
+
+-- To use it through FaultWall, let the proxy's login switch to it, then set the agent's
+-- Database role on the Agents page (or rerun with --proxy-role NAME):
+--    GRANT fw_agent_e2e TO faultwall_proxy;
+
+-- 2. Schema access.
+GRANT USAGE ON SCHEMA billing TO fw_agent_e2e;
+GRANT USAGE ON SCHEMA public TO fw_agent_e2e;
+
+-- 3. Read access (44 tables and views).
+GRANT SELECT (id, email, name, created_at) ON public.users TO fw_agent_e2e;  -- leaves out password_hash
+GRANT SELECT (id, user_id, label) ON public.api_tokens TO fw_agent_e2e;  -- leaves out token
+GRANT SELECT (id, name, city) ON public.customers TO fw_agent_e2e;  -- leaves out ssn
+GRANT SELECT ON public.orders TO fw_agent_e2e;
+GRANT SELECT ON public.tickets TO fw_agent_e2e;
+GRANT SELECT ON public."Weird Table" TO fw_agent_e2e;
+GRANT SELECT ON public.tenant_notes TO fw_agent_e2e;
+GRANT SELECT ON public.filler_01 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_02 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_03 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_04 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_05 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_06 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_07 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_08 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_09 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_10 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_11 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_12 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_13 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_14 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_15 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_16 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_17 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_18 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_19 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_20 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_21 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_22 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_23 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_24 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_25 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_26 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_27 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_28 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_29 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_30 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_31 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_32 TO fw_agent_e2e;
+GRANT SELECT ON public.filler_33 TO fw_agent_e2e;
+GRANT SELECT ON public.order_totals TO fw_agent_e2e;
+GRANT SELECT (id, amount) ON billing.invoices TO fw_agent_e2e;  -- leaves out card_token
+GRANT SELECT ON billing.payouts TO fw_agent_e2e;
+GRANT SELECT ON billing.ledger TO fw_agent_e2e;
+-- Left out because they read secret-looking columns:
+--    public.user_logins (view reads public.users.password_hash)
+
+-- 4. Writes.
+-- None. Add --writes 'orders,tickets' to grant INSERT, UPDATE, DELETE on just those tables.
+
+-- Row-level security is on for public.tenant_notes.
+-- Policies apply to fw_agent_e2e only if they are written TO PUBLIC or name it. Check them before relying on it.
+
+COMMIT;
+
+-- Still requires Faultwall
+-- These controls can't be written as Postgres grants (enforced by Faultwall):
+--   - Writes without a WHERE clause: fwa_app_user can UPDATE or DELETE every row of 42 tables in one statement. A grant can't require a WHERE.
+--   - Row-count caps: Postgres has no per-statement limit on rows read or changed.
+--   - Approval before a write: Postgres can't pause a statement until a person approves it.
+--   - Per-agent identity on a shared login: every agent that connects as fwa_app_user looks the same to Postgres.
+--   - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one.
+--
+-- Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read
+-------------------
+PASS  --fix has the Rev 4 header
+PASS  --fix has the 'Still requires Faultwall' section
+PASS  --fix: NOLOGIN role
+PASS  --fix: column grant leaves out password_hash
+PASS  --fix: quotes weird names
+PASS  --fix: never REVOKE / ALTER / DROP (anywhere, comments included)
+PASS  --fix: no grant to an existing role
+PASS  --fix: no write grants by default
+PASS  --fix --writes tickets grants writes on tickets only
+PASS  --fix --proxy-role grants the new role to the proxy login
+PASS  --fix refuses a role name that already exists
+== read-only: snapshot after
+PASS  target DB unchanged by audit (schema, grants, roles, rows)
+PASS  no fw_agent role was created by --fix
+== apply --fix to a scratch copy and test the new role
+PASS  fix.sql applies cleanly
+PASS  fixw.sql applies cleanly
+PASS  new role can SELECT non-secret columns of users
+PASS  new role can SELECT a plain table
+PASS  new role can SELECT the weird table
+PASS  new role can't SELECT users.password_hash
+PASS  new role can't SELECT * FROM users
+PASS  new role can't read the view over password_hash
+PASS  new role can't SELECT api_tokens.token / billing.invoices.card_token
+PASS  new role can't DELETE
+PASS  new role can't UPDATE / TRUNCATE / DROP
+PASS  new role can't CREATE in public
+PASS  --writes role can INSERT/DELETE on tickets
+PASS  --writes role still can't DELETE on orders
+PASS  proxy login can switch to the --writes role
+PASS  the shared app user still works after --fix (nothing revoked)
+== 500-table scale
+generated 500 tables + 20 views in 1.51s
+faultwall audit: role fwa_big on database fwa_scratch500 at 127.0.0.1:5544 (PostgreSQL 16.13 (Homebrew))
+Read-only: nothing was changed. No network calls besides this database connection.
+
+Summary
+  fwa_big can DELETE on 500 of 500 tables, UPDATE 500, TRUNCATE 500, and read 100 secret columns (t_1.api_token, t_10.password_hash, t_11.api_token, +97 more).
+  Owns 500 (can ALTER/DROP). 10 views read secret columns. 2 dangerous functions executable (pg_cancel_backend, pg_terminate_backend).
+PASS  500 tables: audit exits 0 (rc=0)
+PASS  500 tables: summary counts 500 tables
+PASS  500 tables: audit under 60s (0.07s)
+PASS  500 tables: --fix under 60s (0.05s)
+500-table audit wall time: 0.07s, --fix: 0.05s
+
+== result: 65 passed, 0 failed. fixture audit 0.31s, 500-table audit 0.07s, total e2e 5.45s
