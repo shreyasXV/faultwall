@@ -209,7 +209,6 @@ func main() {
 		// blocks the query path.
 		if cpCfg, ok := loadControlPlaneConfig(); ok {
 			telemetryClient = NewTelemetryClient(cpCfg)
-			telemetryClient.StartHeartbeat(60 * time.Second)
 			shape := "off (FW_TELEMETRY_QUERY_SHAPE=off): op, table, rows, agent only"
 			if cpCfg.QueryShape {
 				shape = "on: literal-free shapes like `UPDATE orders SET status = ? WHERE id = ?` (disable: FW_TELEMETRY_QUERY_SHAPE=off)"
@@ -239,6 +238,9 @@ func main() {
 			}
 			policySyncer.Start()
 		}
+		// Heartbeat starts after the first policy sync so its first beat
+		// already reports the accepted policy_version (app "N of M on vX").
+		telemetryClient.StartHeartbeat(60 * time.Second)
 		initHoldControlPlane()
 		if rules, mode := holdRules(policyEngine); len(rules) > 0 {
 			log.Printf("✋ Approvals: %d hold rule(s), timeout %s (default deny), enforced=%v", len(rules), holdTimeout(policyEngine), holdsEnforced(policyEngine, mode))
