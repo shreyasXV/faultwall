@@ -1,0 +1,17 @@
+PASS control plane up (/healthz)
+PASS sign-up provisions a workspace  [201]
+PASS install token issued  [201]
+PASS agent created in app, key shown once  [status=201 id=ec02b5ac-0aa2-4688-b4a3-2fa70ad44600]
+PASS agent connects with its key and reads  [rows=2]
+PASS DROP TABLE blocked by policy  [[BLOCKED by FaultWall] blocked_operation (op: DROP) [0.01ms]]
+PASS UPDATE pauses and appears in the app's approval queue  [pending=1]
+PASS approver sees shape only, no values  [shape='update orders set total = ? where id = ?']
+PASS approve in app  [200]
+PASS approved write ran on the database  [{'ok': True, 'secs': 0.4} total=99]
+PASS denied write never runs, agent gets a clear error  [[BLOCKED by FaultWall] DELETE on orders was held for approval and denied by e2e@faultwall.test. It did not run.]
+PASS policy change (writes -> block) enforced after sync  [[BLOCKED by FaultWall] blocked_operation (op: UPDATE) [0.25ms]]
+PASS approval audit trail records approve + deny  [status=200 len=719]
+PASS activity summary served  [200 {"lines": [], "since": "2026-10-03T19:02:48.158828Z"}]
+PASS revoked key refused  [connection failed: connection to server at "127.0.0.1", port 15499 failed: FATAL:  [BLOCKED by FaultWall] FaultWall: the key for agent "support-agent" was revok]
+
+15/15 passed

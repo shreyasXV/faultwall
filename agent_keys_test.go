@@ -351,10 +351,12 @@ func TestKeyPasswordAuthWire(t *testing.T) {
 	}
 }
 
-// Ask-first must NOT pause by default before wave 2 (V1-SPEC Rev 4).
-func TestAskFirstDoesNotPauseByDefault(t *testing.T) {
-	if proxyHoldCapable {
-		t.Fatal("control-plane ask-first must not pause before wave 2; it compiles to flag")
+// Wave 2 pulled forward (Soumya, 2026-10-04): control-plane "ask first" pauses
+// the statement until a person approves. Held statements still leave the
+// proxy only as a literal-free shape (hold_cp.go).
+func TestAskFirstPausesByDefault(t *testing.T) {
+	if !proxyHoldCapable {
+		t.Fatal("control-plane ask-first must pause (hold), not just flag")
 	}
 }
 

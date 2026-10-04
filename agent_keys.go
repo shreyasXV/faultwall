@@ -37,8 +37,8 @@ import (
 // AgentKeyPrefix marks control-plane issued agent keys.
 const AgentKeyPrefix = "fw_ak_"
 
-// proxyHoldCapable is advertised to the control plane. Hold-at-Execute exists
-// (hold_gate.go) but stays OFF for control-plane "ask first" toggles until
+// proxyHoldCapable is advertised to the control plane. ON since 2026-10-04
+// (wave 2 pulled forward by founder decision). Historical note: it was OFF for control-plane "ask first" toggles until
 // wave 2 (V1-SPEC Rev 4): ask-first compiles to flag here, and the access-
 // request lane turns it into deny + pre-filled request. Pausing happens only
 // for rules an Owner explicitly sets to pause (local approvals.rules / --hold),
@@ -46,7 +46,7 @@ const AgentKeyPrefix = "fw_ak_"
 // can change that; see hold_cp.go).
 // When this flips to true, holdRules() already feeds ManagedPolicy.HoldRules
 // to the gate.
-var proxyHoldCapable = false
+var proxyHoldCapable = true
 
 // AgentKeyEntry is one issued key, by hash.
 type AgentKeyEntry struct {
