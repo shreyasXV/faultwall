@@ -1,0 +1,50 @@
+-- faultwall audit --fix: new per-agent role fw_agent_support_bot
+-- Generates the database privileges that can be represented natively, and identifies controls that still require Faultwall.
+-- Based on what app_user can read in database shop. Printed only, nothing was run.
+-- Run it as an admin after reading it. It creates one new role and grants to it.
+-- It does not change app_user or any other existing role, so your app keeps working.
+-- Secret-looking columns are left out with column-level grants. Views that read them are left out.
+
+BEGIN;
+
+-- 1. The role. NOLOGIN: FaultWall's proxy switches to it (db_role on the Agents page).
+--    For an agent that connects to Postgres directly instead, use this line in place of the next one:
+--    CREATE ROLE fw_agent_support_bot LOGIN PASSWORD 'choose-a-long-random-password';
+CREATE ROLE fw_agent_support_bot NOLOGIN;
+
+-- To use it through FaultWall, let the proxy's login switch to it, then set the agent's
+-- Database role on the Agents page (or rerun with --proxy-role NAME):
+--    GRANT fw_agent_support_bot TO faultwall_proxy;
+
+-- 2. Schema access.
+GRANT USAGE ON SCHEMA public TO fw_agent_support_bot;
+
+-- 3. Read access (7 tables and views).
+GRANT SELECT (id, email) ON public.users TO fw_agent_support_bot;  -- leaves out password_hash
+GRANT SELECT ON public.orders TO fw_agent_support_bot;
+GRANT SELECT ON public.tickets TO fw_agent_support_bot;
+GRANT SELECT ON public.ledger TO fw_agent_support_bot;
+GRANT SELECT (id, "Mixed Case", "select") ON public."Weird ""Name""" TO fw_agent_support_bot;  -- leaves out api_token
+GRANT SELECT (id, event) ON public.audit_log TO fw_agent_support_bot;  -- leaves out actor_ssn
+GRANT SELECT ON public.order_totals TO fw_agent_support_bot;
+-- Left out because they read secret-looking columns:
+--    public.user_logins (view reads public.users.password_hash)
+
+-- 4. Writes.
+GRANT INSERT, UPDATE, DELETE ON public.tickets TO fw_agent_support_bot;
+GRANT USAGE ON SEQUENCE public.tickets_id_seq TO fw_agent_support_bot;
+
+-- Row-level security is on for public.tickets.
+-- Policies apply to fw_agent_support_bot only if they are written TO PUBLIC or name it. Check them before relying on it.
+
+COMMIT;
+
+-- Still requires Faultwall
+-- These controls can't be written as Postgres grants (enforced by Faultwall):
+--   - Writes without a WHERE clause: app_user can UPDATE or DELETE every row of 4 tables in one statement. A grant can't require a WHERE.
+--   - Row-count caps: Postgres has no per-statement limit on rows read or changed.
+--   - Approval before a write: Postgres can't pause a statement until a person approves it.
+--   - Per-agent identity on a shared login: every agent that connects as app_user looks the same to Postgres. 3 sessions are open as app_user right now (1 application_name value).
+--   - Query-shape rules: Postgres can't refuse a statement by its shape (a SELECT with no LIMIT, a bulk export, a query that joins every table). It also can't tell a sensitive read through a view or function from a plain one.
+--
+-- Want this for your agent's real traffic? Free 48h read: https://faultwall.com/read

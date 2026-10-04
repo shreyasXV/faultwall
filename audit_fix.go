@@ -225,6 +225,12 @@ func buildAuditFix(rep *AuditReport, o *auditOptions) (string, error) {
 			}
 			schemas[fr.schema] = true
 			qn := quoteQualified(fr.schema, fr.name)
+			if t := auditFindTable(rep, fr.schema, fr.name); t != nil {
+				p := t.Privileges
+				if !p.Insert || !p.Update || !p.Delete {
+					writeGrants = append(writeGrants, fmt.Sprintf("-- note: %s can't INSERT, UPDATE and DELETE on %s.%s today; this grants more than it has.", rep.Role.Name, fr.schema, fr.name))
+				}
+			}
 			var nonSecret []string
 			for _, c := range fr.cols {
 				if !isSecretColumn(c.Column) {
@@ -335,6 +341,15 @@ func auditQuoteCols(cols []string) string {
 		q[i] = auditQuoteIdent(c)
 	}
 	return strings.Join(q, ", ")
+}
+
+func auditFindTable(rep *AuditReport, schema, name string) *AuditTable {
+	for i := range rep.Tables {
+		if rep.Tables[i].Schema == schema && rep.Tables[i].Name == name {
+			return &rep.Tables[i]
+		}
+	}
+	return nil
 }
 
 // auditResolveTable finds a --writes entry ("table" or "schema.table").
