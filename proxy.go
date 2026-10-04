@@ -888,7 +888,7 @@ func sendStartupError(client net.Conn, msg string) {
 }
 
 // safeCheckQuery parses query once, then evaluates it against the policy with
-// panic recovery (fail-open). Returns both the violation and the *ParsedQuery
+// panic recovery (fail-CLOSED). Returns both the violation and the *ParsedQuery
 // so callers can reuse the parsed result without a second CGO round-trip.
 func safeCheckQuery(pe *PolicyEngine, identity *AgentIdentity, query string) (violation *PolicyViolation, parsed *ParsedQuery) {
 	return safeCheckQueryWithContext(pe, identity, query, nil)
@@ -901,8 +901,18 @@ func safeCheckQueryWithContext(pe *PolicyEngine, identity *AgentIdentity, query 
 	parsed = ParseQuery(query)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("%s[FAIL-OPEN]%s panic in policy check: %v — allowing query", colorYellow, colorReset, r)
-			violation = nil
+			log.Printf("%s%s[FAIL-CLOSED]%s panic in policy check: %v — BLOCKING query", colorRed, colorBold, colorReset, r)
+			agentID := ""
+			if identity != nil {
+				agentID = identity.AgentID
+			}
+			violation = &PolicyViolation{
+				AgentID:   agentID,
+				Query:     query,
+				Reason:    "policy check failed (parser panic) — blocked fail-closed",
+				Action:    "blocked",
+				Timestamp: time.Now(),
+			}
 		}
 	}()
 	violation = pe.CheckQueryWithContext(identity, parsed, query, 0, ctx)

@@ -22,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/shreyasXV/faultwall/policygen/agent"
 )
 
@@ -78,7 +80,7 @@ func (c *APAProposalClient) post(rep agent.ProposalReport) {
 		AgentID:        rep.AgentID,
 		Title:          rep.Title,
 		YAMLDiff:       rep.YAMLDiff,
-		MergedYAML:     rep.MergedYAML,
+		MergedYAML:     redactPolicySecrets(rep.MergedYAML),
 		Confidence:     rep.Confidence,
 		DiffLines:      rep.DiffLines,
 	})
@@ -102,5 +104,57 @@ func (c *APAProposalClient) post(rep agent.ProposalReport) {
 	resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		log.Printf("apa propose upload rejected (agent=%s): HTTP %d", rep.AgentID, resp.StatusCode)
+	}
+}
+
+// secretYAMLKeys are policy keys whose values must never leave the proxy host.
+// merged_yaml is the full policies.yaml, which carries per-agent auth_tokens;
+// shipping it verbatim would hand every agent credential to the control plane.
+var secretYAMLKeys = map[string]bool{
+	"auth_token": true, "token": true, "password": true, "secret": true,
+	"api_key": true, "database_url": true, "dsn": true, "webhook_url": true,
+	"slack_webhook_url": true, "alert_webhook_url": true,
+}
+
+// redactPolicySecrets replaces secret-bearing scalar values in a policies.yaml
+// document with "[REDACTED]". Comments and structure are preserved. If the
+// document can't be parsed, it returns "" (fail closed: send no YAML rather
+// than risk leaking secrets).
+func redactPolicySecrets(doc string) string {
+	if strings.TrimSpace(doc) == "" {
+		return doc
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(doc), &root); err != nil {
+		log.Printf("[APA] merged_yaml unparseable, dropping from proposal: %v", err)
+		return ""
+	}
+	redactNode(&root)
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+func redactNode(n *yaml.Node) {
+	if n == nil {
+		return
+	}
+	if n.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			if secretYAMLKeys[strings.ToLower(k.Value)] && v.Kind == yaml.ScalarNode && v.Value != "" {
+				v.Value = "[REDACTED]"
+				v.Style = yaml.DoubleQuotedStyle
+				v.Tag = "!!str"
+				continue
+			}
+			redactNode(v)
+		}
+		return
+	}
+	for _, c := range n.Content {
+		redactNode(c)
 	}
 }
