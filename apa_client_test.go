@@ -33,7 +33,7 @@ func TestAPAProposalPayloadRedaction(t *testing.T) {
 
 	allowed := map[string]bool{
 		"installation_id": true, "agent_id": true, "title": true,
-		"yaml_diff": true, "confidence": true, "diff_lines": true,
+		"yaml_diff": true, "merged_yaml": true, "confidence": true, "diff_lines": true,
 	}
 	for k := range m {
 		if !allowed[k] {
@@ -84,5 +84,25 @@ func TestProposalReportNoQueryFields(t *testing.T) {
 		if strings.Contains(strings.ToLower(string(b)), "\""+forbidden+"\"") {
 			t.Errorf("forbidden field %q present in ProposalReport", forbidden)
 		}
+	}
+}
+
+// TestAPAMergedYAMLRedactsSecrets: merged_yaml is the full policies.yaml and
+// must never carry agent auth tokens or connection secrets to the control plane.
+func TestAPAMergedYAMLRedactsSecrets(t *testing.T) {
+	in := "# policy\nagents:\n  cursor-ai:\n    auth_token: \"cursor-secret-123\"\n    missions:\n      m:\n        tables: [public.feedback]\n  demo:\n    auth_token: demo-secret-789\ncontrol_plane:\n  token: cp-tok-xyz\n  webhook_url: https://hooks.example/abc\n"
+	out := redactPolicySecrets(in)
+	for _, leak := range []string{"cursor-secret-123", "demo-secret-789", "cp-tok-xyz", "hooks.example/abc"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("secret %q leaked in merged_yaml:\n%s", leak, out)
+		}
+	}
+	for _, keep := range []string{"public.feedback", "cursor-ai", "[REDACTED]", "# policy"} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("expected %q preserved in redacted yaml:\n%s", keep, out)
+		}
+	}
+	if got := redactPolicySecrets("agents: [unclosed"); got != "" {
+		t.Errorf("unparseable yaml must fail closed to empty, got %q", got)
 	}
 }

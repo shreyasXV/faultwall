@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"regexp"
 	"strings"
@@ -42,11 +43,11 @@ type ParsedQuery struct {
 	ServerInfoFuncs []string // current_user, session_user, current_catalog, etc.
 	SystemColumns   []string // ctid, xmin, xmax, cmin, cmax, tableoid
 	CTENames        []string // CTE alias names (WITH x AS ...) — not real tables
-	Fingerprint         string // pg_query.Fingerprint() hex, set once by ParseQuery — use this, never call FingerprintQuery on the same query again
-	HasRegprocCast      bool   // true if query contains ::regproc/::regprocedure cast
-	HasPgCatalogOp      bool   // true if query uses OPERATOR(pg_catalog.*) syntax
-	HasPII              bool   // true if query touches PII-sensitive columns
-	UsedAST             bool
+	Fingerprint     string   // pg_query.Fingerprint() hex, set once by ParseQuery — use this, never call FingerprintQuery on the same query again
+	HasRegprocCast  bool     // true if query contains ::regproc/::regprocedure cast
+	HasPgCatalogOp  bool     // true if query uses OPERATOR(pg_catalog.*) syntax
+	HasPII          bool     // true if query touches PII-sensitive columns
+	UsedAST         bool
 }
 
 // systemColumnNames are Postgres hidden system columns that leak internal metadata.
@@ -61,21 +62,21 @@ var systemColumnNames = map[string]bool{
 
 // piiColumnNames are column names that typically contain personally identifiable information
 var piiColumnNames = map[string]bool{
-	"email":           true,
-	"ssn":             true,
-	"social_security": true,
-	"phone":           true,
-	"phone_number":    true,
-	"address":         true,
-	"credit_card":     true,
-	"credit_card_number": true,
-	"card_number":     true,
-	"password":        true,
-	"password_hash":   true,
-	"dob":             true,
-	"date_of_birth":   true,
-	"salary":          true,
-	"bank_account":    true,
+	"email":               true,
+	"ssn":                 true,
+	"social_security":     true,
+	"phone":               true,
+	"phone_number":        true,
+	"address":             true,
+	"credit_card":         true,
+	"credit_card_number":  true,
+	"card_number":         true,
+	"password":            true,
+	"password_hash":       true,
+	"dob":                 true,
+	"date_of_birth":       true,
+	"salary":              true,
+	"bank_account":        true,
 	"bank_account_number": true,
 }
 
@@ -94,19 +95,32 @@ func sanitizeQuery(query string) string {
 // Falls back to regex-based parsing if AST parsing fails.
 func ParseQuery(query string) *ParsedQuery {
 	query = sanitizeQuery(query)
-	// Strip leading SET statements before parsing
-	normalized := stripLeadingSET(query)
 
-	tree, err := pg_query.Parse(normalized)
+	// G2 fix: parse the FULL query, including any leading SET, as a multi-statement
+	// batch. The previous approach (stripLeadingSET + leadingSETOperation) did
+	// string surgery — splitting on the first ';' — which desynced from the real
+	// statement boundaries whenever a leading SET contained a ';' inside a string
+	// literal (e.g. SET application_name='x;y'; SELECT ...), forcing the query onto
+	// the weaker regex path. pg_query.Parse already handles multi-statement input
+	// natively and returns each statement (SET included), so we no longer strip
+	// anything: every statement — leading SET/SET ROLE included — is walked below
+	// and its operation surfaced to the policy engine (F6).
+	tree, err := pg_query.Parse(query)
 	if err != nil {
 		log.Printf("[REGEX-FALLBACK] AST parse failed for query: %v", err)
-		return &ParsedQuery{
+		pq := &ParsedQuery{
 			Operation:   ExtractSQLOperationRegex(query),
 			Tables:      ExtractTablesRegex(query),
 			Functions:   nil,
 			UsedAST:     false,
 			Fingerprint: FingerprintQuery(query),
 		}
+		// Best-effort: if the (unparseable) query begins with a SET/SET ROLE,
+		// surface that op so the regex/fail-closed path can still block it.
+		if leadingSetOp := leadingSETOperation(query); leadingSetOp != "" {
+			pq.Operations = append([]string{leadingSetOp}, pq.Operation)
+		}
+		return pq
 	}
 
 	pq := &ParsedQuery{UsedAST: true, Fingerprint: FingerprintQuery(query)}
@@ -124,6 +138,12 @@ func ParseQuery(query string) *ParsedQuery {
 		op := extractOperationFromNode(stmt)
 		pq.Operations = append(pq.Operations, op)
 
+		// Surface dangerous operations nested inside CTEs (on any DML/SELECT/
+		// MERGE), MERGE WHEN actions, EXPLAIN inner queries, and SELECT-INTO
+		// targets. Without this, families F0/F1/F5/F7 (and the general
+		// data-modifying-CTE case) hide their real operation from the policy check.
+		collectNestedOperations(stmt, &pq.Operations)
+
 		// EXPLAIN ANALYZE actually executes the inner query — extract its
 		// operation so the policy engine can block dangerous inner statements.
 		if expl := stmt.GetExplainStmt(); expl != nil && expl.Query != nil {
@@ -134,6 +154,9 @@ func ParseQuery(query string) *ParsedQuery {
 						if innerOp != "" && innerOp != "UNKNOWN" {
 							pq.Operations = append(pq.Operations, innerOp)
 						}
+						// F7: EXPLAIN ANALYZE executes the inner query, so ops
+						// nested inside it (e.g. an inner CTE DELETE) must surface too.
+						collectNestedOperations(expl.Query, &pq.Operations)
 						break
 					}
 				}
@@ -244,16 +267,16 @@ var OperationCategory = map[string]string{
 	"CHECKPOINT": "ADMIN", "ALTER_SYSTEM": "ADMIN",
 	"ALTER_DATABASE": "ADMIN", "ALTER_DATABASE_SET": "ADMIN",
 	"ALTER_DATABASE_REFRESH_COLL": "ADMIN",
-	"REFRESH_MATVIEW": "ADMIN",
-	"CREATE_TABLESPACE": "ADMIN", "DROP_TABLESPACE": "ADMIN",
+	"REFRESH_MATVIEW":             "ADMIN",
+	"CREATE_TABLESPACE":           "ADMIN", "DROP_TABLESPACE": "ADMIN",
 	"CREATE_DATABASE": "ADMIN", "DROP_DATABASE": "ADMIN",
 	// EXTENSION
 	"CREATE_EXTENSION": "EXTENSION", "ALTER_EXTENSION": "EXTENSION",
 	"ALTER_EXTENSION_CONTENTS": "EXTENSION",
-	"CREATE_FDW": "EXTENSION", "ALTER_FDW": "EXTENSION",
+	"CREATE_FDW":               "EXTENSION", "ALTER_FDW": "EXTENSION",
 	"CREATE_FOREIGN_SERVER": "EXTENSION", "ALTER_FOREIGN_SERVER": "EXTENSION",
 	"IMPORT_FOREIGN_SCHEMA": "EXTENSION",
-	"CREATE_PUBLICATION": "EXTENSION", "ALTER_PUBLICATION": "EXTENSION",
+	"CREATE_PUBLICATION":    "EXTENSION", "ALTER_PUBLICATION": "EXTENSION",
 	"CREATE_SUBSCRIPTION": "EXTENSION", "ALTER_SUBSCRIPTION": "EXTENSION",
 	"DROP_SUBSCRIPTION": "EXTENSION",
 	// EXPLAIN
@@ -522,6 +545,138 @@ func extractOperationFromNode(node *pg_query.Node) string {
 	}
 }
 
+// mergeCmdTypeToOp maps a MergeWhenClause CommandType to a FaultWall operation.
+var mergeCmdTypeToOp = map[pg_query.CmdType]string{
+	pg_query.CmdType_CMD_INSERT: "INSERT",
+	pg_query.CmdType_CMD_UPDATE: "UPDATE",
+	pg_query.CmdType_CMD_DELETE: "DELETE",
+}
+
+// collectNestedOperations surfaces dangerous operations that hide inside a
+// statement so they reach pq.Operations and the policy engine. The hand-walk
+// extractOperationFromNode only reports the OUTER operation; the red-team
+// (families F0/F1/F5/F7 + general data-modifying CTE) showed that operations
+// nested in DML WithClauses, MERGE WHEN actions, EXPLAIN inner queries, and
+// SELECT-INTO targets never surfaced. This walks those recursively and appends
+// each nested op. Guiding principle: fail closed — surface everything.
+// maxNestedOpDepth bounds recursion in collectNestedOperations so a pathological
+// query (deeply nested CTEs / CTAS / cursors) cannot exhaust the stack. If the
+// cap is hit we stop descending but still surface an "UNKNOWN" op, which the
+// policy engine treats as unrecognized and (on non-permissive profiles) blocks —
+// i.e. we fail closed rather than silently under-inspecting.
+const maxNestedOpDepth = 64
+
+func collectNestedOperations(node *pg_query.Node, ops *[]string) {
+	collectNestedOperationsDepth(node, ops, 0)
+}
+
+func collectNestedOperationsDepth(node *pg_query.Node, ops *[]string, depth int) {
+	if node == nil {
+		return
+	}
+	if depth >= maxNestedOpDepth {
+		// Fail closed: signal an unrecognized operation so the policy engine does
+		// not treat an over-deep (evasive) query as fully inspected.
+		*ops = append(*ops, "UNKNOWN")
+		return
+	}
+
+	appendOp := func(inner *pg_query.Node) {
+		if inner == nil {
+			return
+		}
+		op := extractOperationFromNode(inner)
+		if op != "" && op != "UNKNOWN" {
+			*ops = append(*ops, op)
+		}
+		// Recurse so nested-nested ops (CTE inside a CTE, etc.) surface too.
+		collectNestedOperationsDepth(inner, ops, depth+1)
+	}
+
+	// WithClause on ANY statement type — F0 (CTE-on-DML) and the general
+	// data-modifying-CTE case. SelectStmt.WithClause was already implicitly
+	// safe for tables, but its OPERATION was never collected.
+	if with := withClauseOf(node); with != nil {
+		for _, cte := range with.Ctes {
+			if c := cte.GetCommonTableExpr(); c != nil && c.Ctequery != nil {
+				appendOp(c.Ctequery)
+			}
+		}
+	}
+
+	// MERGE WHEN clauses — F1. Each WHEN MATCHED/NOT MATCHED action
+	// (INSERT/UPDATE/DELETE) is a real operation the policy must see.
+	if merge := node.GetMergeStmt(); merge != nil {
+		for _, when := range merge.MergeWhenClauses {
+			if mwc := when.GetMergeWhenClause(); mwc != nil {
+				if op, ok := mergeCmdTypeToOp[mwc.CommandType]; ok {
+					*ops = append(*ops, op)
+				}
+			}
+		}
+	}
+
+	// EXPLAIN inner ops are handled in ParseQuery's ANALYZE-aware block (only
+	// EXPLAIN ANALYZE actually executes the inner query). We intentionally do
+	// NOT surface EXPLAIN inner ops here to preserve the semantics that a plain
+	// EXPLAIN (no ANALYZE) does not run its inner query.
+
+	// SELECT ... INTO — F5. Parses as SelectStmt but creates a relation.
+	// Surface a CREATE so DDL blocks apply.
+	if sel := node.GetSelectStmt(); sel != nil && sel.IntoClause != nil {
+		*ops = append(*ops, "CREATE")
+	}
+
+	// PREPARE inner query — the prepared statement body can itself hide ops.
+	if prep := node.GetPrepareStmt(); prep != nil && prep.Query != nil {
+		appendOp(prep.Query)
+	}
+
+	// CREATE TABLE AS / cursor queries can also wrap DML CTEs.
+	if ctas := node.GetCreateTableAsStmt(); ctas != nil && ctas.Query != nil {
+		collectNestedOperationsDepth(ctas.Query, ops, depth+1)
+	}
+	if dcur := node.GetDeclareCursorStmt(); dcur != nil && dcur.Query != nil {
+		collectNestedOperationsDepth(dcur.Query, ops, depth+1)
+	}
+
+	// DO block — G1. The plpgsql body (including dynamic EXECUTE '<sql>') can
+	// contain real operations (DROP, DELETE, ...). Parse each embedded SQL string
+	// and surface its operation so blocked_operations/profile categories apply.
+	if do := node.GetDoStmt(); do != nil {
+		for _, sql := range doBodyEmbeddedSQL(do) {
+			if innerTree, err := pg_query.Parse(sql); err == nil {
+				for _, rawStmt := range innerTree.Stmts {
+					if s := rawStmt.GetStmt(); s != nil {
+						appendOp(s)
+					}
+				}
+			}
+		}
+	}
+}
+
+// withClauseOf returns the WithClause attached to a statement node, if any.
+// Covers SELECT/INSERT/UPDATE/DELETE/MERGE.
+func withClauseOf(node *pg_query.Node) *pg_query.WithClause {
+	if sel := node.GetSelectStmt(); sel != nil {
+		return sel.WithClause
+	}
+	if ins := node.GetInsertStmt(); ins != nil {
+		return ins.WithClause
+	}
+	if upd := node.GetUpdateStmt(); upd != nil {
+		return upd.WithClause
+	}
+	if del := node.GetDeleteStmt(); del != nil {
+		return del.WithClause
+	}
+	if mrg := node.GetMergeStmt(); mrg != nil {
+		return mrg.WithClause
+	}
+	return nil
+}
+
 // extractTablesFromNode recursively walks the AST to find all table references
 // collectCTENames extracts CTE alias names from WITH clauses
 func collectCTENames(node *pg_query.Node, names *[]string) {
@@ -585,6 +740,13 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 
 	// SelectStmt — walk ALL expression-bearing fields
 	if sel := node.GetSelectStmt(); sel != nil {
+		// F5: SELECT ... INTO newtable creates a relation; extract the target so
+		// blocked_tables applies to the created relation as well.
+		if sel.IntoClause != nil && sel.IntoClause.Rel != nil {
+			rv := &pg_query.Node{}
+			rv.Node = &pg_query.Node_RangeVar{RangeVar: sel.IntoClause.Rel}
+			extractTablesFromNode(rv, tables)
+		}
 		for _, from := range sel.FromClause {
 			extractTablesFromNode(from, tables)
 		}
@@ -656,6 +818,15 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 
 	// InsertStmt
 	if ins := node.GetInsertStmt(); ins != nil {
+		// F0: WithClause CTEs on DML were never walked for tables, so a
+		// data-modifying or reading CTE hung off an INSERT hid its tables.
+		if ins.WithClause != nil {
+			for _, cte := range ins.WithClause.Ctes {
+				if c := cte.GetCommonTableExpr(); c != nil {
+					extractTablesFromNode(c.Ctequery, tables)
+				}
+			}
+		}
 		if ins.Relation != nil {
 			rv := &pg_query.Node{}
 			rv.Node = &pg_query.Node_RangeVar{RangeVar: ins.Relation}
@@ -682,6 +853,14 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 
 	// UpdateStmt
 	if upd := node.GetUpdateStmt(); upd != nil {
+		// F0: walk WithClause CTEs on UPDATE for tables.
+		if upd.WithClause != nil {
+			for _, cte := range upd.WithClause.Ctes {
+				if c := cte.GetCommonTableExpr(); c != nil {
+					extractTablesFromNode(c.Ctequery, tables)
+				}
+			}
+		}
 		if upd.Relation != nil {
 			rv := &pg_query.Node{}
 			rv.Node = &pg_query.Node_RangeVar{RangeVar: upd.Relation}
@@ -705,6 +884,14 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 
 	// DeleteStmt
 	if del := node.GetDeleteStmt(); del != nil {
+		// F0: walk WithClause CTEs on DELETE for tables.
+		if del.WithClause != nil {
+			for _, cte := range del.WithClause.Ctes {
+				if c := cte.GetCommonTableExpr(); c != nil {
+					extractTablesFromNode(c.Ctequery, tables)
+				}
+			}
+		}
 		if del.Relation != nil {
 			rv := &pg_query.Node{}
 			rv.Node = &pg_query.Node_RangeVar{RangeVar: del.Relation}
@@ -950,6 +1137,20 @@ func extractTablesFromNode(node *pg_query.Node, tables *[]string) {
 	if prep := node.GetPrepareStmt(); prep != nil {
 		if prep.Query != nil {
 			extractTablesFromNode(prep.Query, tables)
+		}
+	}
+
+	// DoStmt — G1: recover tables referenced inside the plpgsql body, including
+	// tables named inside a dynamic EXECUTE '<sql>' string literal.
+	if do := node.GetDoStmt(); do != nil {
+		for _, sql := range doBodyEmbeddedSQL(do) {
+			if innerTree, err := pg_query.Parse(sql); err == nil {
+				for _, rawStmt := range innerTree.Stmts {
+					if s := rawStmt.GetStmt(); s != nil {
+						extractTablesFromNode(s, tables)
+					}
+				}
+			}
 		}
 	}
 
@@ -1365,6 +1566,13 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	}
 
 	if ins := node.GetInsertStmt(); ins != nil {
+		if ins.WithClause != nil {
+			for _, cte := range ins.WithClause.Ctes {
+				if c := cte.GetCommonTableExpr(); c != nil {
+					extractFunctionsFromNode(c.Ctequery, functions)
+				}
+			}
+		}
 		if ins.SelectStmt != nil {
 			extractFunctionsFromNode(ins.SelectStmt, functions)
 		}
@@ -1382,6 +1590,13 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	}
 
 	if upd := node.GetUpdateStmt(); upd != nil {
+		if upd.WithClause != nil {
+			for _, cte := range upd.WithClause.Ctes {
+				if c := cte.GetCommonTableExpr(); c != nil {
+					extractFunctionsFromNode(c.Ctequery, functions)
+				}
+			}
+		}
 		for _, target := range upd.TargetList {
 			extractFunctionsFromNode(target, functions)
 		}
@@ -1397,6 +1612,13 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	}
 
 	if del := node.GetDeleteStmt(); del != nil {
+		if del.WithClause != nil {
+			for _, cte := range del.WithClause.Ctes {
+				if c := cte.GetCommonTableExpr(); c != nil {
+					extractFunctionsFromNode(c.Ctequery, functions)
+				}
+			}
+		}
 		if del.WhereClause != nil {
 			extractFunctionsFromNode(del.WhereClause, functions)
 		}
@@ -1453,6 +1675,49 @@ func extractFunctionsFromNode(node *pg_query.Node, functions *[]string) {
 	// SubLink
 	if sub := node.GetSubLink(); sub != nil {
 		extractFunctionsFromNode(sub.Subselect, functions)
+		// F3: the left-hand test expression (x <op> ANY/IN (subquery)) can itself
+		// contain blocked functions like version().
+		extractFunctionsFromNode(sub.Testexpr, functions)
+	}
+
+	// ExecuteStmt — F4: EXECUTE prepared(<expr>) argument expressions run when
+	// the prepared plan executes; walk them for blocked functions.
+	if exec := node.GetExecuteStmt(); exec != nil {
+		for _, param := range exec.Params {
+			extractFunctionsFromNode(param, functions)
+		}
+	}
+
+	// RangeTableSample — F8: TABLESAMPLE method(<args>) sample-size/argument
+	// expressions are evaluated and can hide blocked functions.
+	if rts := node.GetRangeTableSample(); rts != nil {
+		if rts.Relation != nil {
+			extractFunctionsFromNode(rts.Relation, functions)
+		}
+		for _, m := range rts.Method {
+			extractFunctionsFromNode(m, functions)
+		}
+		for _, arg := range rts.Args {
+			extractFunctionsFromNode(arg, functions)
+		}
+		if rts.Repeatable != nil {
+			extractFunctionsFromNode(rts.Repeatable, functions)
+		}
+	}
+
+	// DoStmt — F2: the DO body is an opaque string literal. Parse the plpgsql
+	// body and walk every embedded SQL expression so blocked functions/ops
+	// inside (PERFORM pg_sleep(...), EXECUTE '...', etc.) surface.
+	if do := node.GetDoStmt(); do != nil {
+		for _, sql := range doBodyEmbeddedSQL(do) {
+			if innerTree, err := pg_query.Parse(sql); err == nil {
+				for _, rawStmt := range innerTree.Stmts {
+					if s := rawStmt.GetStmt(); s != nil {
+						extractFunctionsFromNode(s, functions)
+					}
+				}
+			}
+		}
 	}
 
 	// RangeSubselect
@@ -2249,29 +2514,45 @@ func hasPgCatalogOperator(node *pg_query.Node) bool {
 	}
 	if sel := node.GetSelectStmt(); sel != nil {
 		for _, tgt := range sel.TargetList {
-			if hasPgCatalogOperator(tgt) { return true }
+			if hasPgCatalogOperator(tgt) {
+				return true
+			}
 		}
-		if hasPgCatalogOperator(sel.WhereClause) { return true }
+		if hasPgCatalogOperator(sel.WhereClause) {
+			return true
+		}
 		for _, sc := range sel.SortClause {
-			if hasPgCatalogOperator(sc) { return true }
+			if hasPgCatalogOperator(sc) {
+				return true
+			}
 		}
-		if hasPgCatalogOperator(sel.HavingClause) { return true }
+		if hasPgCatalogOperator(sel.HavingClause) {
+			return true
+		}
 	}
 	if rt := node.GetResTarget(); rt != nil {
-		if hasPgCatalogOperator(rt.Val) { return true }
+		if hasPgCatalogOperator(rt.Val) {
+			return true
+		}
 	}
 	if be := node.GetBoolExpr(); be != nil {
 		for _, arg := range be.Args {
-			if hasPgCatalogOperator(arg) { return true }
+			if hasPgCatalogOperator(arg) {
+				return true
+			}
 		}
 	}
 	if fc := node.GetFuncCall(); fc != nil {
 		for _, arg := range fc.Args {
-			if hasPgCatalogOperator(arg) { return true }
+			if hasPgCatalogOperator(arg) {
+				return true
+			}
 		}
 	}
 	if sl := node.GetSubLink(); sl != nil {
-		if hasPgCatalogOperator(sl.Subselect) || hasPgCatalogOperator(sl.Testexpr) { return true }
+		if hasPgCatalogOperator(sl.Subselect) || hasPgCatalogOperator(sl.Testexpr) {
+			return true
+		}
 	}
 	return false
 }
@@ -2402,17 +2683,186 @@ func hasRegprocCast(node *pg_query.Node) bool {
 	return false
 }
 
-// stripLeadingSET removes leading SET statements to parse the actual query
-func stripLeadingSET(query string) string {
-	normalized := strings.TrimSpace(query)
-	upper := strings.ToUpper(normalized)
-	if strings.HasPrefix(upper, "SET ") {
-		idx := strings.Index(normalized, ";")
-		if idx >= 0 && idx+1 < len(normalized) {
-			return strings.TrimSpace(normalized[idx+1:])
+// doBodyEmbeddedSQL extracts the DO block's plpgsql body and returns every
+// embedded SQL expression string found in it. pg_query exposes the plpgsql body
+// as JSON where each executable expression is a {"query": "..."} field (PERFORM,
+// assignments, EXECUTE targets, etc.). Parsing those with pg_query.Parse and
+// walking them lets blocked functions inside a DO block surface (F2).
+func doBodyEmbeddedSQL(do *pg_query.DoStmt) []string {
+	if do == nil {
+		return nil
+	}
+	var body string
+	for _, arg := range do.Args {
+		if de := arg.GetDefElem(); de != nil && strings.EqualFold(de.Defname, "as") {
+			if de.Arg != nil {
+				if s := de.Arg.GetString_(); s != nil {
+					body = s.Sval
+				}
+			}
 		}
 	}
-	return normalized
+	if body == "" {
+		return nil
+	}
+
+	jsonStr, err := pg_query.ParsePlPgSqlToJSON("DO $fw$" + body + "$fw$")
+	if err != nil {
+		// Fail-closed hint: if we cannot parse the body, still try the raw body
+		// as SQL so at least top-level statements are inspected.
+		return []string{body}
+	}
+
+	var queries []string
+	collectJSONQueryStrings(json.RawMessage(jsonStr), &queries)
+	if len(queries) == 0 {
+		queries = append(queries, body)
+	}
+
+	// G1 fix: dynamic EXECUTE hides SQL inside a string literal. pg_query reports
+	// the plpgsql expression for `EXECUTE 'DROP TABLE t'` as the literal
+	// "'DROP TABLE t'" — a string constant, not runnable SQL — so re-parsing it
+	// yields only a bare constant and the DROP/table/function never surface.
+	// For each collected expression, recover any embedded static SQL from its
+	// string-literal parts and add it to the set to inspect.
+	var expanded []string
+	for _, q := range queries {
+		expanded = append(expanded, q)
+		expanded = append(expanded, unwrapDynamicSQL(q)...)
+	}
+	return dedup(expanded)
+}
+
+// unwrapDynamicSQL recovers static SQL embedded in a plpgsql EXECUTE expression.
+// The expression is itself SQL (e.g. "'DROP TABLE t'" or "'DROP TABLE ' || x");
+// we parse it and, for every string constant found, treat that constant's value
+// as SQL to inspect. This surfaces the operation/tables/functions hidden inside a
+// dynamic EXECUTE. Purely dynamic pieces (identifiers, concatenation of variables)
+// cannot be resolved statically; the caller treats a DO body it cannot fully
+// resolve as suspicious (fail-closed on non-permissive profiles).
+func unwrapDynamicSQL(expr string) []string {
+	tree, err := pg_query.Parse("SELECT " + expr)
+	if err != nil {
+		return nil
+	}
+	var literals []string
+	var collect func(n *pg_query.Node)
+	collect = func(n *pg_query.Node) {
+		if n == nil {
+			return
+		}
+		if ac := n.GetAConst(); ac != nil {
+			if sv := ac.GetSval(); sv != nil && strings.TrimSpace(sv.Sval) != "" {
+				literals = append(literals, sv.Sval)
+			}
+		}
+	}
+	// Walk the SELECT target list expressions for string constants.
+	for _, rawStmt := range tree.Stmts {
+		s := rawStmt.GetStmt()
+		if s == nil {
+			continue
+		}
+		if sel := s.GetSelectStmt(); sel != nil {
+			for _, tgt := range sel.TargetList {
+				if rt := tgt.GetResTarget(); rt != nil {
+					collectStringConstants(rt.Val, &literals)
+				}
+			}
+		}
+	}
+	_ = collect
+	return literals
+}
+
+// collectStringConstants walks an expression node and appends every string
+// constant value it finds (recursing into casts, operator expressions, function
+// args, and coalesce/case branches so concatenated and wrapped literals surface).
+func collectStringConstants(node *pg_query.Node, out *[]string) {
+	if node == nil {
+		return
+	}
+	if ac := node.GetAConst(); ac != nil {
+		if sv := ac.GetSval(); sv != nil && strings.TrimSpace(sv.Sval) != "" {
+			*out = append(*out, sv.Sval)
+		}
+	}
+	if ae := node.GetAExpr(); ae != nil {
+		collectStringConstants(ae.Lexpr, out)
+		collectStringConstants(ae.Rexpr, out)
+	}
+	if tc := node.GetTypeCast(); tc != nil {
+		collectStringConstants(tc.Arg, out)
+	}
+	if fc := node.GetFuncCall(); fc != nil {
+		for _, arg := range fc.Args {
+			collectStringConstants(arg, out)
+		}
+	}
+	if ce := node.GetCoalesceExpr(); ce != nil {
+		for _, arg := range ce.Args {
+			collectStringConstants(arg, out)
+		}
+	}
+	if l := node.GetList(); l != nil {
+		for _, item := range l.Items {
+			collectStringConstants(item, out)
+		}
+	}
+}
+
+// collectJSONQueryStrings walks arbitrary JSON and appends every string value
+// under a "query" key. Used to pull embedded SQL out of the plpgsql body JSON.
+func collectJSONQueryStrings(raw json.RawMessage, out *[]string) {
+	var v interface{}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return
+	}
+	var walk func(node interface{})
+	walk = func(node interface{}) {
+		switch n := node.(type) {
+		case map[string]interface{}:
+			for k, val := range n {
+				if k == "query" {
+					if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
+						*out = append(*out, s)
+					}
+				}
+				walk(val)
+			}
+		case []interface{}:
+			for _, item := range n {
+				walk(item)
+			}
+		}
+	}
+	walk(v)
+}
+
+// leadingSETOperation returns the operation string for a leading SET statement
+// ("SET_ROLE" for SET ROLE / SET SESSION AUTHORIZATION, otherwise "SET") when
+// the query begins with one, or "" if there is no leading SET. This lets
+// ParseQuery surface a leading SET that stripLeadingSET removes, so the policy
+// engine can block it (F6) instead of it being silently dropped.
+func leadingSETOperation(query string) string {
+	normalized := strings.TrimSpace(query)
+	upper := strings.ToUpper(normalized)
+	if !strings.HasPrefix(upper, "SET ") {
+		return ""
+	}
+	// Only treat it as a leading SET if it is followed by another statement;
+	// a bare "SET ..." (no trailing ";stmt") parses fine on its own and is
+	// classified by extractOperationFromNode as usual.
+	idx := strings.Index(normalized, ";")
+	if idx < 0 || idx+1 >= len(normalized) || strings.TrimSpace(normalized[idx+1:]) == "" {
+		return ""
+	}
+	// Distinguish SET ROLE / SET SESSION AUTHORIZATION (DCL) from ordinary SET.
+	afterSet := strings.TrimSpace(upper[len("SET "):])
+	if strings.HasPrefix(afterSet, "ROLE") || strings.HasPrefix(afterSet, "SESSION AUTHORIZATION") {
+		return "SET_ROLE"
+	}
+	return "SET"
 }
 
 // dedup removes duplicate strings from a slice
