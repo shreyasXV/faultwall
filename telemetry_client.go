@@ -111,6 +111,12 @@ type ControlPlaneConfig struct {
 	Mode             string
 	InstallationID   string
 	TelemetryEnabled bool
+	// Rev C3 local trust anchor, written by install.sh. Env vars
+	// (FW_TENANT_ID, FW_DATABASE_ID, FW_ENVIRONMENT, FW_POLICY_PUBKEY) win.
+	TenantID     string
+	DatabaseID   string
+	Environment  string
+	PolicyPubKey string
 	// QueryShape: send literal-free query shapes (resolved at load time).
 	QueryShape    bool
 	queryShapeCfg *bool
@@ -238,6 +244,14 @@ func parseControlPlaneTOML(sc *bufio.Scanner, cfg *ControlPlaneConfig) {
 			if cfg.InstallationID == "" {
 				cfg.InstallationID = val
 			}
+		case "tenant_id":
+			cfg.TenantID = val
+		case "database_id":
+			cfg.DatabaseID = val
+		case "environment":
+			cfg.Environment = val
+		case "policy_pubkey":
+			cfg.PolicyPubKey = val
 		case "query_shape":
 			b := val == "true"
 			cfg.queryShapeCfg = &b
@@ -460,7 +474,12 @@ func (tc *TelemetryClient) sendHeartbeat() {
 	if tc == nil {
 		return
 	}
-	body, _ := json.Marshal(map[string]string{"installation_id": tc.cfg.InstallationID})
+	hb := map[string]interface{}{"installation_id": tc.cfg.InstallationID}
+	// Rev 5: report the enforced (accepted, signed) policy version.
+	if v := policySyncer.AcceptedPolicyVersion(); v > 0 {
+		hb["policy_version"] = v
+	}
+	body, _ := json.Marshal(hb)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,

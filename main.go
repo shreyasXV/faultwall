@@ -218,8 +218,25 @@ func main() {
 		}
 		// Per-agent keys + managed agent policies (agent_keys.go). Runs whenever
 		// a control plane url+token is configured, even with telemetry off.
-		if cpCfg, _ := loadControlPlaneConfig(); cpCfg.URL != "" && cpCfg.Token != "" && os.Getenv("FW_AGENT_KEYS") != "false" {
-			policySyncer = NewPolicySyncer(cpCfg.URL, cpCfg.Token, policyEngine, agentKeys)
+		cpCfgP, _ := loadControlPlaneConfig()
+		cpConfigured := cpCfgP.URL != "" && cpCfgP.Token != ""
+		// Rev C3-a / B3: enforce mode with a control plane needs the full
+		// local trust anchor before any connection is accepted.
+		anchor := loadPolicyAnchor(cpCfgP)
+		policyPub, perr := policyStartupCheck(enforcement, cpConfigured, anchor)
+		if perr != nil {
+			log.Fatalf("FATAL: %v", perr)
+		}
+		if cpConfigured && os.Getenv("FW_AGENT_KEYS") != "false" {
+			policySyncer = NewPolicySyncer(cpCfgP.URL, cpCfgP.Token, policyEngine, agentKeys)
+			policySyncer.installationID = cpCfgP.InstallationID
+			if policyPub != nil || enforcement == "enforce" {
+				policySyncer.guard = newPolicyGuard(anchor, enforcement == "enforce", policyPub,
+					guardStatePath(policySyncer.cachePath), nil)
+				policyGuardG = policySyncer.guard
+				log.Printf("🔏 Signed policy required: key %s, scope tenant=%s database=%s environment=%s (enforce=%v)",
+					policyKeyID(policyPub), anchor.TenantID, anchor.DatabaseID, anchor.Environment, enforcement == "enforce")
+			}
 			policySyncer.Start()
 		}
 		initHoldControlPlane()

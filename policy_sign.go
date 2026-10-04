@@ -237,25 +237,3 @@ func writeFileAtomic(path string, b []byte) error {
 	}
 	return os.Rename(tmp, path)
 }
-
-// policyStartupCheck enforces Rev B3 before the proxy starts: enforce mode
-// with a control plane configured requires FW_POLICY_PUBKEY (a valid key).
-func policyStartupCheck(enforcement string, cpConfigured bool) error {
-	if !cpConfigured {
-		return nil
-	}
-	raw := strings.TrimSpace(os.Getenv("FW_POLICY_PUBKEY"))
-	if enforcement == "enforce" && raw == "" {
-		return errors.New("enforce mode needs FW_POLICY_PUBKEY (the control plane's policy signing key, shown in the app's Add-database install command). " +
-			"Refusing to start: without it this proxy cannot tell a real policy from a forged one. Set FW_POLICY_PUBKEY, or run with --mode monitor")
-	}
-	if raw != "" {
-		if _, err := parsePolicyPubKey(raw); err != nil {
-			return fmt.Errorf("FW_POLICY_PUBKEY is not a valid Ed25519 public key: %v", err)
-		}
-	}
-	if enforcement == "enforce" && strings.TrimSpace(os.Getenv("FW_DATABASE_ID")) == "" {
-		return errors.New("enforce mode needs FW_DATABASE_ID (from the app's Add-database install command); policies are per database and a policy for another database is rejected")
-	}
-	return nil
-}

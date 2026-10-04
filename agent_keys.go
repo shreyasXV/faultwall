@@ -24,6 +24,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -243,6 +244,35 @@ type policySyncResponse struct {
 	AgentKeys           []AgentKeyEntry `json:"agent_keys"`
 	HoldCompiledAs      string          `json:"hold_compiled_as"`
 	SyncIntervalSeconds int             `json:"sync_interval_seconds"`
+	// lane/policy (POLICY-WIRE-CONTRACT Rev B/C.1).
+	PolicyVersion   int64       `json:"policy_version,omitempty"`
+	TenantID        string      `json:"tenant_id,omitempty"`
+	DatabaseID      string      `json:"database_id,omitempty"`
+	Environment     string      `json:"environment,omitempty"`
+	InstallationID  string      `json:"installation_id,omitempty"`
+	SignedPolicy    *signedBlob `json:"signed_policy,omitempty"`
+	SignedFreshness *signedBlob `json:"signed_freshness,omitempty"`
+	FreshnessError  string      `json:"freshness_error,omitempty"`
+
+	agentKeysRaw []byte // exact agent_keys bytes as served (hashed by the signed doc)
+	rawBody      []byte // whole response, cached verbatim so the cache re-verifies
+}
+
+// decodePolicyResponse parses GET /v1/policy keeping agent_keys' raw bytes.
+func decodePolicyResponse(body []byte) (*policySyncResponse, error) {
+	var out policySyncResponse
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	var raw struct {
+		AgentKeys json.RawMessage `json:"agent_keys"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	out.agentKeysRaw = []byte(raw.AgentKeys)
+	out.rawBody = body
+	return &out, nil
 }
 
 // PolicySyncer pulls managed agents + keys from the control plane.
@@ -253,12 +283,32 @@ type PolicySyncer struct {
 	http       *http.Client
 	cachePath  string
 	interval   time.Duration // 0 = use server-advertised value
+	// guard verifies signed policy and owns the offline window (policy_guard.go).
+	// nil = legacy unsigned sync (no control-plane key configured, watch mode).
+	guard          *policyGuard
+	installationID string
 
 	mu         sync.Mutex
 	lastSync   time.Time
 	lastErr    string
-	lastVer    string
-	agentNames []string
+	lastVer     string
+	agentNames  []string
+	loggedFresh bool
+}
+
+func (ps *PolicySyncer) setErr(err error) {
+	ps.mu.Lock()
+	ps.lastErr = err.Error()
+	ps.mu.Unlock()
+}
+
+// AcceptedPolicyVersion is the signed version this proxy enforces (0 = none),
+// reported in heartbeats. Nil-safe.
+func (ps *PolicySyncer) AcceptedPolicyVersion() int64 {
+	if ps == nil || ps.guard == nil {
+		return 0
+	}
+	return ps.guard.AcceptedVersion()
 }
 
 func defaultAgentCachePath() string {
@@ -299,13 +349,27 @@ func capabilities() string {
 }
 
 // fetch performs one GET /v1/policy.
-func (ps *PolicySyncer) fetch() (*policySyncResponse, error) {
-	req, err := http.NewRequest("GET", ps.url+"/v1/policy", nil)
+func (ps *PolicySyncer) fetch(nonce string) (*policySyncResponse, error) {
+	q := url.Values{}
+	if nonce != "" {
+		q.Set("nonce", nonce)
+	}
+	if ps.installationID != "" {
+		q.Set("installation_id", ps.installationID)
+	}
+	u := ps.url + "/v1/policy"
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+ps.token)
 	req.Header.Set("X-FaultWall-Capabilities", capabilities())
+	if ps.installationID != "" {
+		req.Header.Set("X-FaultWall-Installation", ps.installationID)
+	}
 	resp, err := ps.http.Do(req)
 	if err != nil {
 		return nil, err
@@ -315,11 +379,11 @@ func (ps *PolicySyncer) fetch() (*policySyncResponse, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("GET /v1/policy: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	var out policySyncResponse
-	if err := json.Unmarshal(body, &out); err != nil {
+	out, err := decodePolicyResponse(body)
+	if err != nil {
 		return nil, fmt.Errorf("decoding /v1/policy: %w", err)
 	}
-	return &out, nil
+	return out, nil
 }
 
 // apply installs a policy response (from the network or the cache). Returns
@@ -357,7 +421,12 @@ func (ps *PolicySyncer) apply(r *policySyncResponse) (bool, error) {
 
 // SyncOnce fetches, applies and caches. Network errors keep the current state.
 func (ps *PolicySyncer) SyncOnce() (time.Duration, error) {
-	r, err := ps.fetch()
+	var f policyFetch
+	if ps.guard != nil {
+		defer ps.guard.touch()
+		f = policyFetch{nonce: newPollNonce(), sentWall: ps.guard.clock.Wall(), sentMono: ps.guard.clock.Mono()}
+	}
+	r, err := ps.fetch(f.nonce)
 	ps.mu.Lock()
 	ps.lastSync = time.Now()
 	if err != nil {
@@ -369,12 +438,36 @@ func (ps *PolicySyncer) SyncOnce() (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
+	if ps.guard != nil {
+		newer, gerr := ps.guard.acceptDoc(r)
+		if gerr != nil {
+			ps.setErr(gerr)
+			return 0, gerr // keep the last good policy
+		}
+		if newer && r.SignedPolicy != nil {
+			log.Printf("🔏 Policy v%d accepted: signature verified, scope %s/%s/%s matches this proxy",
+				r.PolicyVersion, ps.guard.anchor.TenantID, ps.guard.anchor.DatabaseID, ps.guard.anchor.Environment)
+		}
+	}
 	changed, err := ps.apply(r)
 	if err != nil {
 		return 0, err
 	}
 	if changed {
 		ps.saveCache(r)
+	}
+	if ps.guard != nil {
+		wasExpired := ps.guard.Expired()
+		if ferr := ps.guard.acceptFreshness(r, f, ps.installationID); ferr != nil {
+			ps.setErr(ferr)
+		} else if r.SignedFreshness != nil && ps.guard.pub != nil {
+			st := ps.guard.status()
+			if wasExpired || !ps.loggedFresh {
+				log.Printf("🔏 Offline window refreshed by signed freshness token: fresh_at %v, expires in %ds",
+					st["policy_fresh_at"], st["policy_expires_in_seconds"])
+				ps.loggedFresh = true
+			}
+		}
 	}
 	next := ps.interval
 	if next == 0 && r.SyncIntervalSeconds > 0 {
@@ -390,9 +483,12 @@ func (ps *PolicySyncer) saveCache(r *policySyncResponse) {
 	if ps.cachePath == "" {
 		return
 	}
-	b, err := json.Marshal(r)
-	if err != nil {
-		return
+	b := r.rawBody // verbatim, so a restart re-verifies the signed bytes
+	if len(b) == 0 {
+		var err error
+		if b, err = json.Marshal(r); err != nil {
+			return
+		}
 	}
 	_ = os.MkdirAll(filepath.Dir(ps.cachePath), 0o700)
 	tmp := ps.cachePath + ".tmp"
@@ -411,11 +507,17 @@ func (ps *PolicySyncer) LoadCache() bool {
 	if err != nil {
 		return false
 	}
-	var r policySyncResponse
-	if json.Unmarshal(b, &r) != nil {
+	r, err := decodePolicyResponse(b)
+	if err != nil {
 		return false
 	}
-	if _, err := ps.apply(&r); err != nil {
+	if ps.guard != nil {
+		if _, err := ps.guard.acceptDoc(r); err != nil {
+			log.Printf("⚠️  Cached policy at %s refused: %v", ps.cachePath, err)
+			return false
+		}
+	}
+	if _, err := ps.apply(r); err != nil {
 		return false
 	}
 	log.Printf("🔑 Loaded cached agent keys from %s", ps.cachePath)
@@ -450,7 +552,7 @@ func (ps *PolicySyncer) Start() {
 func (ps *PolicySyncer) Status() map[string]interface{} {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"control_plane": ps.url,
 		"version":       ps.lastVer,
 		"agents":        ps.agentNames,
@@ -459,6 +561,12 @@ func (ps *PolicySyncer) Status() map[string]interface{} {
 		"last_error":    ps.lastErr,
 		"hold_capable":  proxyHoldCapable,
 	}
+	if ps.guard != nil {
+		for k, v := range ps.guard.status() {
+			m[k] = v
+		}
+	}
+	return m
 }
 
 // policySyncer is the process-global syncer (nil when not configured).
