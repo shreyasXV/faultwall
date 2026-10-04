@@ -1,8 +1,14 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func flagsFor(q string) []string { return tryStaticFlags(ParseQuery(q), q) }
@@ -212,5 +218,121 @@ func TestTryUnnamedAgentIsMarked(t *testing.T) {
 		if want := a.Agent == "unknown"; a.Unnamed != want {
 			t.Errorf("agent %q unnamed=%v want %v", a.Agent, a.Unnamed, want)
 		}
+	}
+}
+
+// TestTryTelemetryOnlyWhenEnrolled: `faultwall try` sends activity to the
+// control plane only with the same enroll config --proxy uses, and nothing
+// at all without it.
+func TestTryTelemetryOnlyWhenEnrolled(t *testing.T) {
+	defer func() { telemetryClient = nil }()
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	// Not enrolled: no env, no config file.
+	t.Setenv("FAULTWALL_CONTROL_PLANE_URL", "")
+	t.Setenv("FAULTWALL_CONTROL_PLANE_TOKEN", "")
+	t.Setenv("FAULTWALL_CONFIG_FILE", filepath.Join(t.TempDir(), "missing.toml"))
+	telemetryClient = nil
+	if tc, err := startTryTelemetry(nil); err != nil || tc != nil || telemetryClient != nil {
+		t.Fatal("try without control-plane config must not start telemetry")
+	}
+	if c := newTelemetryConn(nil, "psql"); c != nil {
+		t.Fatal("telemetry conn must be nil (no-op) when not enrolled")
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("not enrolled: %d requests sent", n)
+	}
+
+	// Enrolled via the same [control_plane] config --proxy reads (what
+	// install.sh writes): events reach the control plane.
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(cfgPath, []byte("[control_plane]\nurl = \""+srv.URL+"\"\ntoken = \"tok\"\ntelemetry_enabled = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FAULTWALL_CONFIG_FILE", cfgPath)
+	tc, err := startTryTelemetry(nil)
+	if err != nil || tc == nil || telemetryClient != tc {
+		t.Fatal("enrolled try must start the telemetry client")
+	}
+	c := newTelemetryConn(&AgentIdentity{AgentID: "support-bot"}, "")
+	c.emitNow("blocked", "block", nil, ParseQuery("DROP TABLE x"), "DROP TABLE x", 0.1)
+	tc.Close()
+	if n := atomic.LoadInt32(&hits); n < 1 {
+		t.Fatal("enrolled try sent nothing")
+	}
+}
+
+// TestTryControlPlaneFlags: --token/--control-plane enroll try (same as
+// install.sh), win over the config file, and misuse fails clearly.
+func TestTryControlPlaneFlags(t *testing.T) {
+	defer func() { telemetryClient = nil }()
+	t.Setenv("FAULTWALL_CONTROL_PLANE_URL", "")
+	t.Setenv("FAULTWALL_CONTROL_PLANE_TOKEN", "")
+	t.Setenv("FAULTWALL_CONFIG_FILE", filepath.Join(t.TempDir(), "missing.toml"))
+	env := func(string) string { return "" }
+
+	o, err := parseTryArgs([]string{"--token", "fw_tok", "--control-plane", "https://cp.example/"}, env)
+	if err != nil || o.CPToken != "fw_tok" || o.CPURL != "https://cp.example" {
+		t.Fatalf("parse: %+v %v", o, err)
+	}
+	if _, err := parseTryArgs([]string{"--control-plane", "cp.example"}, env); err == nil {
+		t.Fatal("non-URL --control-plane must error")
+	}
+	cfg, ok, err := tryControlPlane(o)
+	if err != nil || !ok || cfg.URL != "https://cp.example" || cfg.Token != "fw_tok" {
+		t.Fatalf("flags enroll: %+v ok=%v err=%v", cfg, ok, err)
+	}
+	if _, _, err := tryControlPlane(&tryOptions{CPToken: "x"}); err == nil {
+		t.Fatal("--token without a URL must error")
+	}
+	if _, _, err := tryControlPlane(&tryOptions{CPURL: "https://cp"}); err == nil {
+		t.Fatal("--control-plane without --token must error")
+	}
+	if _, ok, _ := tryControlPlane(&tryOptions{}); ok {
+		t.Fatal("no flags, no config: must not enroll")
+	}
+
+	// End to end: flags only -> enroll + telemetry to that server, banner says so.
+	var enrolls, tele int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer fw_tok" {
+			w.WriteHeader(401)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/enroll":
+			atomic.AddInt32(&enrolls, 1)
+			w.WriteHeader(201)
+			w.Write([]byte(`{"installation_id":"inst-try-1"}`))
+		case "/v1/telemetry":
+			atomic.AddInt32(&tele, 1)
+			w.WriteHeader(202)
+		default:
+			w.WriteHeader(200)
+		}
+	}))
+	defer srv.Close()
+	tc, err := startTryTelemetry(&tryOptions{CPToken: "fw_tok", CPURL: srv.URL})
+	if err != nil || tc == nil || tc.cfg.InstallationID != "inst-try-1" {
+		t.Fatalf("start: %v %+v", err, tc)
+	}
+	b := tryTelemetryBanner(tc)
+	if !strings.Contains(b, srv.URL) || !strings.Contains(b, "inst-try-1") || !strings.Contains(b, "query values never leave your box") {
+		t.Fatalf("banner %q", b)
+	}
+	c := newTelemetryConn(&AgentIdentity{AgentID: "support-bot"}, "")
+	c.emitNow("blocked", "block", nil, ParseQuery("DROP TABLE x"), "DROP TABLE x", 0.1)
+	tc.Close()
+	if atomic.LoadInt32(&enrolls) != 1 || atomic.LoadInt32(&tele) < 1 {
+		t.Fatalf("enrolls=%d telemetry=%d", enrolls, tele)
+	}
+	if b := tryTelemetryBanner(nil); !strings.Contains(b, "Nothing leaves this machine") {
+		t.Fatalf("local banner %q", b)
 	}
 }

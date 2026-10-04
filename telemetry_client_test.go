@@ -38,6 +38,9 @@ func TestTelemetryEventRedaction(t *testing.T) {
 		"event_type": true, "decision": true, "table_name": true,
 		"op_type": true, "latency_ms": true, "cost_flag": true,
 		"risk_score": true, "p99_breach_prob": true, "qwm_threshold_ms": true,
+		// Activity-feed metadata (counts / identity, never values). The full
+		// allowlist incl. gated query_shape is in telemetry_activity_test.go.
+		"rows_affected": true,
 	}
 	for k := range m {
 		if !allowed[k] {
@@ -93,14 +96,15 @@ func TestTelemetryClientNonBlocking(t *testing.T) {
 
 	tc := &TelemetryClient{
 		cfg:  ControlPlaneConfig{URL: "http://example.invalid", Token: "x"},
-		ch:   make(chan TelemetryEvent, 8),
+		ch:   make(chan telemetryItem, 8),
 		stop: make(chan struct{}),
 	}
-	tc.flushFn = func(events []TelemetryEvent) {
+	tc.flushFn = func(events []TelemetryEvent) error {
 		mu.Lock()
 		flushed += len(events)
 		mu.Unlock()
 		time.Sleep(20 * time.Millisecond) // simulate slow network
+		return nil
 	}
 	tc.wg.Add(1)
 	go tc.run()

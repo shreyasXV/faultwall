@@ -10,11 +10,13 @@ package main
 // (per-agent queries + what FaultWall would have flagged).
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"database/sql"
 	_ "embed"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -49,6 +51,10 @@ type tryOptions struct {
 	Agent       string // agent name used in the printed connection string
 	Open        bool
 	Duration    time.Duration // 0 = run until Ctrl+C
+	// Control-plane enroll (same meaning as install.sh --token/--control-plane).
+	// Empty: fall back to FAULTWALL_CONTROL_PLANE_URL/_TOKEN or ~/.faultwall/config.toml.
+	CPToken string
+	CPURL   string
 }
 
 func inContainer() bool {
@@ -82,7 +88,7 @@ func parseTryArgs(args []string, getenv func(string) string) (*tryOptions, error
 			o.DemoAgent = false
 		case a == "--no-open":
 			o.Open = false
-		case a == "--listen", a == "--port", a == "--ui-port", a == "--agent", a == "--db", a == "--for":
+		case a == "--listen", a == "--port", a == "--ui-port", a == "--agent", a == "--db", a == "--for", a == "--token", a == "--control-plane":
 			v, err := next()
 			if err != nil {
 				return nil, err
@@ -114,6 +120,13 @@ func parseTryArgs(args []string, getenv func(string) string) (*tryOptions, error
 				o.Agent = v
 			case "--db":
 				o.DatabaseURL = v
+			case "--token":
+				o.CPToken = v
+			case "--control-plane":
+				if !strings.HasPrefix(v, "http://") && !strings.HasPrefix(v, "https://") {
+					return nil, fmt.Errorf("--control-plane must be an http(s):// URL, got %q", v)
+				}
+				o.CPURL = strings.TrimRight(v, "/")
 			case "--for":
 				d, err := time.ParseDuration(v)
 				if err != nil {
@@ -176,7 +189,14 @@ Flags:
   --demo             Force demo mode even if DATABASE_URL is set
   --no-demo-agent    Demo Postgres only, no scripted agent
   --no-open          Don't open the browser
-  --for DURATION     Exit after DURATION (e.g. 2m); default runs until Ctrl+C`)
+  --for DURATION     Exit after DURATION (e.g. 2m); default runs until Ctrl+C
+  --token TOKEN      Control-plane token: also send activity metadata to your hosted
+                     dashboard (query values never leave your box)
+  --control-plane URL  Control-plane URL for --token (e.g. https://api.faultwall.com)
+
+Without --token, try uses FAULTWALL_CONTROL_PLANE_URL/_TOKEN or the
+[control_plane] section install.sh writes to ~/.faultwall/config.toml.
+Not enrolled: nothing leaves this machine.`)
 }
 
 // upstreamTarget is the parsed DATABASE_URL.
@@ -620,6 +640,88 @@ func tryMux(info *tryInfo) *http.ServeMux {
 	return mux
 }
 
+// tryControlPlane resolves the control-plane config for try: --token /
+// --control-plane flags win, then the env / config.toml --proxy uses.
+// ok=false means not enrolled: nothing is sent.
+func tryControlPlane(o *tryOptions) (ControlPlaneConfig, bool, error) {
+	cfg, ok := loadControlPlaneConfig()
+	if o == nil || (o.CPToken == "" && o.CPURL == "") {
+		return cfg, ok, nil
+	}
+	if o.CPToken == "" {
+		return cfg, false, fmt.Errorf("--control-plane needs --token (get one from your dashboard)")
+	}
+	url := o.CPURL
+	if url == "" {
+		url = cfg.URL // e.g. FAULTWALL_CONTROL_PLANE_URL
+	}
+	if url == "" {
+		return cfg, false, fmt.Errorf("--token needs --control-plane URL (e.g. https://api.faultwall.com)")
+	}
+	if url != cfg.URL || o.CPToken != cfg.Token {
+		cfg.InstallationID = "" // the config file's id belongs to another enrollment
+	}
+	cfg.URL, cfg.Token = url, o.CPToken
+	cfg.TelemetryEnabled = os.Getenv("FAULTWALL_TELEMETRY") != "false"
+	return cfg, cfg.TelemetryEnabled, nil
+}
+
+// tryEnroll registers this try session (mode monitor) so its events are
+// attributed to an installation. Best effort: telemetry works without it.
+func tryEnroll(cfg ControlPlaneConfig) string {
+	host, _ := os.Hostname()
+	body, _ := json.Marshal(map[string]string{"hostname": host, "mode": "monitor", "version": Version, "pg_target_redacted": "redacted"})
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(cfg.URL, "/")+"/v1/enroll", bytes.NewReader(body))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	var out struct {
+		InstallationID string `json:"installation_id"`
+	}
+	if resp.StatusCode/100 != 2 || json.NewDecoder(resp.Body).Decode(&out) != nil {
+		return ""
+	}
+	return out.InstallationID
+}
+
+// startTryTelemetry reuses the --proxy telemetry client when try is enrolled
+// to a control plane; nil (no-op) otherwise.
+func startTryTelemetry(o *tryOptions) (*TelemetryClient, error) {
+	cfg, ok, err := tryControlPlane(o)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if cfg.InstallationID == "" {
+		cfg.InstallationID = tryEnroll(cfg)
+	}
+	telemetryClient = NewTelemetryClient(cfg)
+	telemetryClient.StartHeartbeat(60 * time.Second)
+	return telemetryClient, nil
+}
+
+// tryTelemetryBanner is the startup line that says where events go.
+func tryTelemetryBanner(tc *TelemetryClient) string {
+	if tc == nil {
+		return "local only. Nothing leaves this machine (add --token TOKEN --control-plane URL to send to your dashboard)"
+	}
+	inst := ""
+	if tc.cfg.InstallationID != "" {
+		inst = ", installation " + tc.cfg.InstallationID
+	}
+	shape := "op, table, rows, agent"
+	if tc.cfg.QueryShape {
+		shape += " + query shapes with values replaced by ?"
+	}
+	return fmt.Sprintf("%s%s (%s; query values never leave your box)", tc.cfg.URL, inst, shape)
+}
+
 func runTry(args []string) error {
 	opts, err := parseTryArgs(args, os.Getenv)
 	if errors.Is(err, errTryHelp) {
@@ -684,6 +786,15 @@ func runTry(args []string) error {
 	policyEngine = tryPolicyEngine()
 	agentTracker = NewAgentTracker()
 	tryActivity = NewTryActivityStore(1000)
+	// Same enroll config as --proxy (FAULTWALL_CONTROL_PLANE_URL/_TOKEN env or
+	// [control_plane] in ~/.faultwall/config.toml). Not enrolled: nothing is sent.
+	tc, err := startTryTelemetry(opts)
+	if err != nil {
+		return err
+	}
+	if tc != nil {
+		defer tc.Close()
+	}
 	tryActivity.onFlag = func(ev *TryEvent, flags []string) {
 		reasons := make([]string, 0, len(flags))
 		for _, f := range flags {
@@ -754,6 +865,7 @@ func runTry(args []string) error {
 	fmt.Printf("  %sName your agent:%s  keep %sapplication_name=agent:<name>:mission:<task>%s on whatever connection string\n", colorBold, colorReset, colorCyan, colorReset)
 	fmt.Println("                    you use, or its queries show up as \"unknown\". Python: psycopg.connect(url, application_name=\"agent:support-bot:mission:triage\")")
 	fmt.Printf("  %sUpstream:%s        %s (%s)\n", colorBold, colorReset, target.Addr(), tlsNote)
+	fmt.Printf("  %sEvents go to:%s    %s\n", colorBold, colorReset, tryTelemetryBanner(tc))
 	fmt.Printf("  %sFlags (no YAML):%s DDL · UPDATE/DELETE without WHERE · writes >100 rows · secret-column reads\n", colorBold, colorReset)
 	fmt.Println()
 	if opts.Demo && opts.DemoAgent {

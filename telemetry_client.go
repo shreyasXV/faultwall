@@ -2,18 +2,31 @@ package main
 
 // Control-plane telemetry client.
 //
-// PRIVACY CONTRACT (non-negotiable): this client sends METADATA ONLY to the
-// control plane — event_type, decision, table_name, op_type, latency_ms,
-// cost_flag, and QWM risk scores (risk_score, p99_breach_prob,
-// qwm_threshold_ms). It NEVER sends query text, bound parameter values, row
-// data, or policy bodies. The TelemetryEvent struct deliberately has no
-// query/sql/body field; telemetry_client_test.go asserts this via JSON
-// marshaling.
+// PRIVACY CONTRACT: this client sends METADATA to the control plane. It
+// NEVER sends raw query text, bound parameter values, row data, or policy
+// bodies. Per event it sends:
+//
+//   - decision metadata: event_type, decision, op_type, table_name, tables,
+//     latency_ms, cost_flag, QWM scores (risk_score, p99_breach_prob,
+//     qwm_threshold_ms), rows_affected (from the CommandComplete tag), and
+//     the flag codes / reasons from the zero-config rules (try_activity.go).
+//   - identity metadata: agent_id and mission from application_name
+//     (agent:<id>:mission:<mission>; the :token: part is never sent).
+//   - fingerprint: pg_query's structural hash (hex). Literals do not affect it.
+//   - query_shape (GATED, see telemetryQueryShapeDefault): the statement with
+//     EVERY literal replaced by ? and comments removed, built from the
+//     pg_query token stream (telemetry_shape.go). "UPDATE orders SET status
+//     = ? WHERE id = ?". Off with FW_TELEMETRY_QUERY_SHAPE=off.
+//
+// The TelemetryEvent struct deliberately has no query/sql/params field;
+// telemetry_client_test.go asserts this via JSON marshaling and checks that a
+// planted literal never survives into query_shape.
 //
 // PERFORMANCE CONTRACT: emitting telemetry must NOT add latency to the query
 // hot path (the sub-3ms promise). Emit() is a non-blocking send onto a buffered
 // channel; if the buffer is full, the event is dropped. A background goroutine
-// batches and flushes over HTTP. Network I/O never happens on the caller's
+// batches and flushes over HTTP, retrying failed batches with exponential
+// backoff from a bounded buffer. Network I/O never happens on the caller's
 // goroutine.
 
 import (
@@ -21,7 +34,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -30,17 +45,41 @@ import (
 	"time"
 )
 
+// telemetryQueryShapeDefault decides whether literal-free query shapes are
+// sent to the control plane when FW_TELEMETRY_QUERY_SHAPE is not set.
+// FOUNDER DECISION PENDING: this is the single line to flip. true = shapes on
+// by default once enrolled (the hosted feed shows "UPDATE orders SET status =
+// ? WHERE id = ?"); false = opt-in, the feed shows op + table + rows only.
+const telemetryQueryShapeDefault = true
+
+// telemetryQueryShapeEnabled resolves FW_TELEMETRY_QUERY_SHAPE (env) >
+// query_shape in [control_plane] (config.toml) > telemetryQueryShapeDefault.
+func telemetryQueryShapeEnabled(env string, cfgVal *bool) bool {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "1", "true", "on", "yes":
+		return true
+	case "0", "false", "off", "no":
+		return false
+	}
+	if cfgVal != nil {
+		return *cfgVal
+	}
+	return telemetryQueryShapeDefault
+}
+
 // qwmTelemetrySLOMs is the p99 SLO threshold (ms) reported alongside the
 // lightweight QWM risk score on telemetry events. This is an OSS-side default
 // for the open-core proxy; the trained cost-prediction model and its calibrated
 // SLO decisioning live in the closed faultwall-ebpf repo, not here.
 const qwmTelemetrySLOMs = 500
 
-// TelemetryEvent is the metadata-only shape pushed to the control plane.
-// NOTE: there is intentionally NO field carrying query text or row data.
+// TelemetryEvent is the metadata shape pushed to the control plane.
+// NOTE: there is intentionally NO field carrying raw query text, parameter
+// values or row data. QueryShape is literal-free and gated (see above).
 type TelemetryEvent struct {
-	EventType string  `json:"event_type"` // allowed | blocked | monitored
-	Decision  string  `json:"decision"`   // allow | block | flag
+	TS        string  `json:"ts,omitempty"` // RFC3339Nano, when the statement ran
+	EventType string  `json:"event_type"`   // allowed | blocked | monitored
+	Decision  string  `json:"decision"`     // allow | block | flag
 	TableName string  `json:"table_name"`
 	OpType    string  `json:"op_type"` // SELECT | INSERT | UPDATE | DELETE | ...
 	LatencyMs float64 `json:"latency_ms"`
@@ -50,6 +89,19 @@ type TelemetryEvent struct {
 	RiskScore      float64 `json:"risk_score"`       // P(bad) for this query, 0..1
 	P99BreachProb  float64 `json:"p99_breach_prob"`  // P(p99 latency breach), 0..1
 	QWMThresholdMs int     `json:"qwm_threshold_ms"` // configured QWM p99 threshold (ms)
+
+	// Activity feed metadata (hosted See screen).
+	AgentID      string   `json:"agent_id,omitempty"`      // from application_name; "unknown" if none
+	AgentUnnamed bool     `json:"agent_unnamed,omitempty"` // connected without agent:<name>:…
+	Mission      string   `json:"mission,omitempty"`
+	Tables       []string `json:"tables,omitempty"`
+	RowsAffected int64    `json:"rows_affected"`         // from CommandComplete ("UPDATE 12" -> 12)
+	RowsKnown    bool     `json:"rows_known,omitempty"`  // false: statement errored / never completed
+	Failed       bool     `json:"failed,omitempty"`      // upstream returned an error
+	Flags        []string `json:"flags,omitempty"`       // ddl | no_where | secret_read | mass_write | server_func | policy
+	Reasons      []string `json:"reasons,omitempty"`     // human text for each flag (no literals)
+	Fingerprint  string   `json:"fingerprint,omitempty"` // pg_query structural hash (hex)
+	QueryShape   string   `json:"query_shape,omitempty"` // literals stripped; gated by FW_TELEMETRY_QUERY_SHAPE
 }
 
 // ControlPlaneConfig is parsed from ~/.faultwall/config.toml ([control_plane]).
@@ -59,33 +111,50 @@ type ControlPlaneConfig struct {
 	Mode             string
 	InstallationID   string
 	TelemetryEnabled bool
+	// QueryShape: send literal-free query shapes (resolved at load time).
+	QueryShape    bool
+	queryShapeCfg *bool
 }
 
 // TelemetryClient buffers events and flushes them to the control plane.
 type TelemetryClient struct {
 	cfg      ControlPlaneConfig
-	ch       chan TelemetryEvent
+	ch       chan telemetryItem
 	http     *http.Client
 	wg       sync.WaitGroup
 	stop     chan struct{}
 	stopOnce sync.Once
 
 	// flushFn is the transport used to ship a batch. Overridable in tests so
-	// no real network is required. Defaults to postBatch.
-	flushFn func(events []TelemetryEvent)
+	// no real network is required. Defaults to postBatch. A non-nil error
+	// marked retryable (see errTelemetryRetry) keeps the batch for retry.
+	flushFn func(events []TelemetryEvent) error
 
 	dropped uint64
+	sent    uint64
 	mu      sync.Mutex
+
+	// Backoff state (only touched by run()).
+	backoffBase time.Duration
+	backoffMax  time.Duration
 }
+
+// errTelemetryRetry wraps transport errors worth retrying (network, 5xx, 429).
+type errTelemetryRetry struct{ err error }
+
+func (e errTelemetryRetry) Error() string { return e.err.Error() }
 
 // telemetryClient is the process-global client (nil when control plane is not
 // configured — Emit becomes a no-op).
 var telemetryClient *TelemetryClient
 
 const (
-	telemetryBufSize    = 1024
-	telemetryBatchSize  = 50
-	telemetryFlushEvery = 5 * time.Second
+	telemetryBufSize    = 4096
+	telemetryBatchSize  = 200
+	telemetryFlushEvery = 2 * time.Second
+	// telemetryRetryMax bounds events held for retry while the control plane
+	// is unreachable; oldest are dropped first.
+	telemetryRetryMax = 10000
 )
 
 // loadControlPlaneConfig reads ~/.faultwall/config.toml. Returns ok=false when
@@ -100,6 +169,9 @@ func loadControlPlaneConfig() (ControlPlaneConfig, bool) {
 	}
 	if v := os.Getenv("FAULTWALL_CONTROL_PLANE_TOKEN"); v != "" {
 		cfg.Token = v
+	}
+	if v := os.Getenv("FAULTWALL_INSTALLATION_ID"); v != "" {
+		cfg.InstallationID = v
 	}
 
 	path := os.Getenv("FAULTWALL_CONFIG_FILE")
@@ -116,6 +188,7 @@ func loadControlPlaneConfig() (ControlPlaneConfig, bool) {
 		}
 	}
 
+	cfg.QueryShape = telemetryQueryShapeEnabled(os.Getenv("FW_TELEMETRY_QUERY_SHAPE"), cfg.queryShapeCfg)
 	if cfg.URL == "" || cfg.Token == "" {
 		return cfg, false
 	}
@@ -162,7 +235,12 @@ func parseControlPlaneTOML(sc *bufio.Scanner, cfg *ControlPlaneConfig) {
 		case "mode":
 			cfg.Mode = val
 		case "installation_id":
-			cfg.InstallationID = val
+			if cfg.InstallationID == "" {
+				cfg.InstallationID = val
+			}
+		case "query_shape":
+			b := val == "true"
+			cfg.queryShapeCfg = &b
 		case "telemetry_enabled":
 			cfg.TelemetryEnabled = val == "true"
 		}
@@ -173,9 +251,12 @@ func parseControlPlaneTOML(sc *bufio.Scanner, cfg *ControlPlaneConfig) {
 func NewTelemetryClient(cfg ControlPlaneConfig) *TelemetryClient {
 	tc := &TelemetryClient{
 		cfg:  cfg,
-		ch:   make(chan TelemetryEvent, telemetryBufSize),
+		ch:   make(chan telemetryItem, telemetryBufSize),
 		http: &http.Client{Timeout: 5 * time.Second},
 		stop: make(chan struct{}),
+
+		backoffBase: time.Second,
+		backoffMax:  60 * time.Second,
 	}
 	tc.flushFn = tc.postBatch
 	tc.wg.Add(1)
@@ -186,11 +267,17 @@ func NewTelemetryClient(cfg ControlPlaneConfig) *TelemetryClient {
 // Emit queues an event. NON-BLOCKING: if the buffer is full the event is
 // dropped so the query path is never stalled. Safe to call with a nil client.
 func (tc *TelemetryClient) Emit(ev TelemetryEvent) {
+	tc.emitItem(telemetryItem{ev: ev})
+}
+
+// emitItem is Emit for events that still need finalizing (flags, shape) on
+// the background goroutine. NON-BLOCKING.
+func (tc *TelemetryClient) emitItem(it telemetryItem) {
 	if tc == nil {
 		return
 	}
 	select {
-	case tc.ch <- ev:
+	case tc.ch <- it:
 	default:
 		tc.mu.Lock()
 		tc.dropped++
@@ -198,45 +285,122 @@ func (tc *TelemetryClient) Emit(ev TelemetryEvent) {
 	}
 }
 
-// run batches events and flushes on size or interval.
+// run batches events and flushes on size or interval. Failed batches are
+// kept (bounded by telemetryRetryMax) and retried with exponential backoff +
+// jitter; new events keep being accepted meanwhile.
 func (tc *TelemetryClient) run() {
 	defer tc.wg.Done()
 	ticker := time.NewTicker(telemetryFlushEvery)
 	defer ticker.Stop()
 	batch := make([]TelemetryEvent, 0, telemetryBatchSize)
+	var retry []TelemetryEvent
+	var nextTry time.Time
+	failures := 0
+	base, max := tc.backoffBase, tc.backoffMax
+	if base <= 0 {
+		base = time.Second
+	}
+	if max <= 0 {
+		max = 60 * time.Second
+	}
 
-	flush := func() {
-		if len(batch) == 0 {
+	send := func(evs []TelemetryEvent) bool {
+		err := tc.flushFn(evs)
+		if err == nil {
+			tc.mu.Lock()
+			tc.sent += uint64(len(evs))
+			tc.mu.Unlock()
+			return true
+		}
+		if _, ok := err.(errTelemetryRetry); !ok {
+			// Non-retryable (4xx, marshal): drop, don't hammer.
+			tc.mu.Lock()
+			tc.dropped += uint64(len(evs))
+			tc.mu.Unlock()
+			return true
+		}
+		return false
+	}
+
+	flush := func(final bool) {
+		if len(batch) > 0 {
+			retry = append(retry, batch...)
+			batch = batch[:0]
+		}
+		if over := len(retry) - telemetryRetryMax; over > 0 {
+			retry = retry[over:]
+			tc.mu.Lock()
+			tc.dropped += uint64(over)
+			tc.mu.Unlock()
+		}
+		if len(retry) == 0 || (!final && time.Now().Before(nextTry)) {
 			return
 		}
-		out := make([]TelemetryEvent, len(batch))
-		copy(out, batch)
-		batch = batch[:0]
-		tc.flushFn(out)
+		for len(retry) > 0 {
+			n := len(retry)
+			if n > telemetryBatchSize {
+				n = telemetryBatchSize
+			}
+			out := make([]TelemetryEvent, n)
+			copy(out, retry[:n])
+			if !send(out) {
+				failures++
+				d := base << uint(minInt(failures-1, 16))
+				if d > max || d <= 0 {
+					d = max
+				}
+				d = d/2 + time.Duration(rand.Int63n(int64(d/2)+1))
+				nextTry = time.Now().Add(d)
+				if failures == 1 || failures%10 == 0 {
+					log.Printf("telemetry: control plane unreachable, %d events queued, retry in %s", len(retry), d.Round(time.Millisecond))
+				}
+				return
+			}
+			failures = 0
+			retry = retry[n:]
+		}
+		retry = nil
 	}
 
 	for {
 		select {
-		case ev := <-tc.ch:
-			batch = append(batch, ev)
+		case it := <-tc.ch:
+			batch = append(batch, finalizeTelemetryItem(it, tc.cfg.QueryShape))
 			if len(batch) >= telemetryBatchSize {
-				flush()
+				flush(false)
 			}
 		case <-ticker.C:
-			flush()
+			flush(false)
 		case <-tc.stop:
-			// Drain whatever is buffered, then final flush.
+			// Drain whatever is buffered, then one final attempt.
 			for {
 				select {
-				case ev := <-tc.ch:
-					batch = append(batch, ev)
+				case it := <-tc.ch:
+					batch = append(batch, finalizeTelemetryItem(it, tc.cfg.QueryShape))
 				default:
-					flush()
+					flush(true)
 					return
 				}
 			}
 		}
 	}
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Stats returns (sent, dropped) counters.
+func (tc *TelemetryClient) Stats() (sent, dropped uint64) {
+	if tc == nil {
+		return 0, 0
+	}
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+	return tc.sent, tc.dropped
 }
 
 // Close stops the flusher and waits for a final drain.
@@ -254,34 +418,41 @@ type telemetryPayload struct {
 	Events         []TelemetryEvent `json:"events"`
 }
 
-// postBatch ships a batch to the control plane. Errors are logged and swallowed
-// (fire-and-forget) — telemetry must never break the proxy.
-func (tc *TelemetryClient) postBatch(events []TelemetryEvent) {
+// postBatch ships a batch to the control plane. Network errors, 5xx and 429
+// are returned as errTelemetryRetry so run() keeps the batch and backs off.
+// Telemetry must never break the proxy: nothing here touches the query path.
+func (tc *TelemetryClient) postBatch(events []TelemetryEvent) error {
 	if len(events) == 0 {
-		return
+		return nil
 	}
 	body, err := json.Marshal(telemetryPayload{
 		InstallationID: tc.cfg.InstallationID,
 		Events:         events,
 	})
 	if err != nil {
-		return
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(tc.cfg.URL, "/")+"/v1/telemetry", bytes.NewReader(body))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+tc.cfg.Token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := tc.http.Do(req)
 	if err != nil {
-		log.Printf("telemetry flush failed (dropped %d events this batch): %v", len(events), err)
-		return
+		return errTelemetryRetry{err}
 	}
 	resp.Body.Close()
+	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+		return errTelemetryRetry{fmt.Errorf("control plane HTTP %d", resp.StatusCode)}
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("control plane HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // sendHeartbeat posts a single heartbeat (called periodically by a goroutine).

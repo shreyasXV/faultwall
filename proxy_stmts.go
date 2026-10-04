@@ -25,6 +25,9 @@ type preparedStmt struct {
 	pq        *ParsedQuery
 	violation *PolicyViolation // monitored (non-blocking) violation from Parse, or nil
 	runs      int
+	// decisionMs is the policy decision latency measured at Parse; repeat
+	// Executes reuse it for telemetry (no re-check happens on Execute).
+	decisionMs float64
 }
 
 type boundPortal struct {
@@ -44,6 +47,11 @@ func newStmtTracker() *stmtTracker {
 // parse records a non-blocked Parse. Re-parsing a name (always the case for
 // the unnamed statement) starts a fresh run count.
 func (t *stmtTracker) parse(name, query string, pq *ParsedQuery, v *PolicyViolation) {
+	t.parseTimed(name, query, pq, v, 0)
+}
+
+// parseTimed is parse plus the decision latency (for telemetry).
+func (t *stmtTracker) parseTimed(name, query string, pq *ParsedQuery, v *PolicyViolation, decisionMs float64) {
 	if _, exists := t.stmts[name]; !exists && len(t.stmts) >= maxTrackedStmts {
 		return
 	}
@@ -52,7 +60,7 @@ func (t *stmtTracker) parse(name, query string, pq *ParsedQuery, v *PolicyViolat
 		cp := *v
 		vc = &cp
 	}
-	t.stmts[name] = &preparedStmt{query: query, pq: pq, violation: vc}
+	t.stmts[name] = &preparedStmt{query: query, pq: pq, violation: vc, decisionMs: decisionMs}
 }
 
 func (t *stmtTracker) bind(portal, stmt string) {
@@ -65,20 +73,27 @@ func (t *stmtTracker) bind(portal, stmt string) {
 // execute returns the statement behind portal and whether this Execute is a
 // repeat run that Parse did not already account for.
 func (t *stmtTracker) execute(portal string) (*preparedStmt, bool) {
+	st, repeat, _ := t.executeRun(portal)
+	return st, repeat
+}
+
+// executeRun is execute plus newRun: false only when this Execute resumes a
+// suspended portal (same run, no new CommandComplete accounting needed).
+func (t *stmtTracker) executeRun(portal string) (st *preparedStmt, repeat, newRun bool) {
 	p, ok := t.portals[portal]
 	if !ok {
-		return nil, false
+		return nil, false, false
 	}
-	st := t.stmts[p.stmt]
+	st = t.stmts[p.stmt]
 	if st == nil {
-		return nil, false
+		return nil, false, false
 	}
 	if p.executed { // resumed suspended portal — same run
-		return st, false
+		return st, false, false
 	}
 	p.executed = true
 	st.runs++
-	return st, st.runs > 1
+	return st, st.runs > 1, true
 }
 
 func (t *stmtTracker) close(kind byte, name string) {
@@ -92,7 +107,9 @@ func (t *stmtTracker) close(kind byte, name string) {
 
 // accountRepeatExecute logs and counts a repeat run of a cached prepared
 // statement exactly like a first run: agent query count, [ALLOWED]/[MONITOR]
-// log line, monitored violation, telemetry and observation.
+// log line, monitored violation and observation. Control-plane telemetry for
+// the run is queued by the caller (telemetryConn.enqueueStmt) so it can carry
+// the CommandComplete row count.
 func accountRepeatExecute(pe *PolicyEngine, st *preparedStmt, agentLabel string, identity *AgentIdentity) {
 	if agentTracker != nil && identity != nil {
 		agentTracker.RecordQuery(identity.AgentID)
@@ -103,10 +120,8 @@ func accountRepeatExecute(pe *PolicyEngine, st *preparedStmt, agentLabel string,
 		v.Timestamp = time.Now()
 		pe.addViolation(v)
 		logMonitored(agentLabel, st.query, &v)
-		emitTelemetryFor("monitored", "flag", &v, st.pq, 0)
 	} else {
 		logAllowed(agentLabel, st.query)
-		emitTelemetryFor("allowed", "allow", nil, st.pq, 0)
 	}
 	recordObservation(agentLabel, identity, st.query, st.pq, false)
 }
