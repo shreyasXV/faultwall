@@ -166,6 +166,10 @@ type holdGate struct {
 	rewrites   sync.Map // marker -> holdErr
 	nRewrites  int32
 	upstreamMu *sync.Mutex // nil: the loop goroutine is the only upstream writer
+
+	// Policy expiry (policy_expiry.go). guard overrides policyGuardG (tests).
+	guard *policyGuard
+	work  txnWork
 }
 
 func newHoldGate(pe *PolicyEngine, identity *AgentIdentity, agentLabel string, client, upstream net.Conn, stmts *stmtTracker) *holdGate {
@@ -222,16 +226,37 @@ func (g *holdGate) next() (byte, []byte, error) {
 			return 0, nil, m.err
 		}
 		rules, mode := holdRules(g.pe)
-		if len(rules) == 0 {
+		guarded := g.guardRef() != nil // signed policy in use: expiry is checked at forwarding
+		if len(rules) == 0 && !guarded {
 			return m.t, m.p, nil
 		}
 		switch {
 		case m.t == 'Q':
-			out, forwarded, err := g.gateSimple(m, rules, mode)
+			if len(rules) > 0 {
+				out, forwarded, err := g.gateSimple(m, rules, mode)
+				if err != nil {
+					return 0, nil, err
+				}
+				if forwarded {
+					continue
+				}
+				m = out
+			}
+			// Judged at release: a statement held past expiry is denied now.
+			out, handled, err := g.expiryFilterSimple(m)
 			if err != nil {
 				return 0, nil, err
 			}
-			if forwarded {
+			if handled {
+				continue
+			}
+			return out.t, out.p, nil
+		case m.t == 'F':
+			out, handled, err := g.expiryFilterFunctionCall(m)
+			if err != nil {
+				return 0, nil, err
+			}
+			if handled {
 				continue
 			}
 			return out.t, out.p, nil
@@ -247,11 +272,14 @@ func (g *holdGate) next() (byte, []byte, error) {
 					break // e.g. CopyData after an Execute of COPY FROM STDIN
 				}
 			}
-			out, err := g.gateGroup(group, rules, mode)
-			if err != nil {
-				return 0, nil, err
+			out := group
+			if len(rules) > 0 {
+				var err error
+				if out, err = g.gateGroup(group, rules, mode); err != nil {
+					return 0, nil, err
+				}
 			}
-			g.queue = append(g.queue, out...)
+			g.queue = append(g.queue, g.expiryFilterGroup(out)...)
 		default:
 			return m.t, m.p, nil
 		}
@@ -384,6 +412,7 @@ func (g *holdGate) gateSimple(m wireMsg, rules []HoldRule, mode string) (wireMsg
 	if err := writeWireMessage(g.upstream, 'Q', repl); err != nil {
 		return m, false, err
 	}
+	g.noteForwarded('Q', repl)
 	return m, true, nil
 }
 

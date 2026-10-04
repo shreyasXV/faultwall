@@ -629,6 +629,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				if len(payload) > 0 {
 					lastTxStatus.Store(payload[0])
 					gate.txn.onReady(payload[0])
+					gate.onReadyWork(payload[0])
 				}
 				// Record per-query stats in agent tracker
 				if agentTracker != nil && identity != nil && !queryStartTime.IsZero() {
@@ -881,6 +882,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			log.Printf("Proxy: upstream write error: %v", err)
 			return
 		}
+		gate.noteForwarded(msgType, payload) // C5: forwarded = authorized
 
 		if msgType == 'Q' || msgType == 'S' {
 			telConn.onSyncPoint()

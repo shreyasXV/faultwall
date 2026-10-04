@@ -129,6 +129,7 @@ type policyGuard struct {
 	pub       ed25519.PublicKey
 	clock     policyClock
 	statePath string
+	maxWindow time.Duration // local cap (FW_POLICY_MAX_OFFLINE_SECONDS), 0 = none
 
 	st        guardState
 	monoBase  time.Duration // Mono() at the start of the current window
@@ -144,7 +145,7 @@ func newPolicyGuard(a policyAnchor, enforce bool, pub ed25519.PublicKey, statePa
 	if clk == nil {
 		clk = realPolicyClock{start: time.Now()}
 	}
-	g := &policyGuard{anchor: a, enforce: enforce, pub: pub, clock: clk, statePath: statePath}
+	g := &policyGuard{anchor: a, enforce: enforce, pub: pub, clock: clk, statePath: statePath, maxWindow: maxOfflineFromEnv()}
 	g.st.PayloadSHA = map[string]string{}
 	g.load()
 	return g
@@ -249,10 +250,26 @@ func (g *policyGuard) touch() {
 }
 
 func (g *policyGuard) window() time.Duration {
+	w := time.Duration(defaultOfflineWindowSeconds) * time.Second
 	if g.st.WindowSeconds > 0 {
-		return time.Duration(g.st.WindowSeconds) * time.Second
+		w = time.Duration(g.st.WindowSeconds) * time.Second
 	}
-	return defaultOfflineWindowSeconds * time.Second
+	// FW_POLICY_MAX_OFFLINE_SECONDS: a local operator cap. It can only make
+	// the window SHORTER than the signed one (stricter), never longer.
+	if g.maxWindow > 0 && g.maxWindow < w {
+		w = g.maxWindow
+	}
+	return w
+}
+
+func maxOfflineFromEnv() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("FW_POLICY_MAX_OFFLINE_SECONDS")); v != "" {
+		var n int64
+		if _, err := fmt.Sscan(v, &n); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 0
 }
 
 func (g *policyGuard) remainingLocked() time.Duration {
@@ -273,10 +290,28 @@ func (g *policyGuard) Expired() bool {
 	return g.enforce && g.remainingLocked() <= 0
 }
 
+// windowLapsed: watch mode past its window (would_deny logging only).
+func (g *policyGuard) windowLapsed() bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return !g.enforce && g.pub != nil && g.remainingLocked() <= 0
+}
+
 // ExpiryMessage is the contract error text.
 func (g *policyGuard) ExpiryMessage() string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.st.FreshAt.IsZero() || !g.haveFresh && g.health == "policy_clock_rollback" {
+		return "no valid signed policy is in force: FaultWall has not accepted a verified, current policy from the control plane" + func() string {
+			if g.health != "" {
+				return " (" + g.health + ")"
+			}
+			return ""
+		}()
+	}
 	since := "never (no accepted freshness token)"
 	at := "unknown"
 	if !g.st.FreshAt.IsZero() {
