@@ -76,7 +76,9 @@ func TestQueryShapeDefaultResolution(t *testing.T) {
 // TestTelemetryEventActivityFieldsNoRawText: the widened event carries the
 // activity metadata but no raw text, and every key is on the allowlist.
 func TestTelemetryEventActivityFieldsNoRawText(t *testing.T) {
-	q := "UPDATE orders SET status = 'secret-xyz' WHERE customer_id = 77"
+	// The numeric literal must be distinctive: a short one like 77 also
+	// appears by chance in the event's generated timestamp.
+	q := "UPDATE orders SET status = 'secret-xyz' WHERE customer_id = 8675309421"
 	pq := ParseQuery(q)
 	c := &telemetryConn{agent: "support-agent", mission: "refunds"}
 	it := c.baseItem("allowed", "allow", nil, pq, q, 0.2)
@@ -85,7 +87,7 @@ func TestTelemetryEventActivityFieldsNoRawText(t *testing.T) {
 		ev := finalizeTelemetryItem(it, shape)
 		b, _ := json.Marshal(ev)
 		s := string(b)
-		if strings.Contains(s, plantedSecret) || strings.Contains(s, "77") {
+		if strings.Contains(s, plantedSecret) || strings.Contains(s, "8675309421") {
 			t.Fatalf("literal in telemetry JSON: %s", s)
 		}
 		var m map[string]any

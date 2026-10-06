@@ -2,12 +2,14 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -74,6 +76,20 @@ func dialUpstream(upstreamAddr string, tlsConfig *tls.Config) (net.Conn, error) 
 	}
 }
 
+// loadCABundle reads a PEM file of CA certificates (e.g. the AWS RDS global
+// bundle) for verifying the upstream Postgres server.
+func loadCABundle(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s contains no PEM certificates", path)
+	}
+	return pool, nil
+}
+
 func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey string, upstreamTLS, upstreamTLSSkipVerify bool) {
 	var tlsConfig *tls.Config
 	if tlsCert != "" && tlsKey != "" {
@@ -101,6 +117,14 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey
 			ServerName:         host,
 			InsecureSkipVerify: upstreamTLSSkipVerify,
 			MinVersion:         tls.VersionTLS12,
+		}
+		if caPath := os.Getenv("UPSTREAM_TLS_CA"); caPath != "" {
+			pool, err := loadCABundle(caPath)
+			if err != nil {
+				log.Fatalf("Proxy: UPSTREAM_TLS_CA: %v", err)
+			}
+			upstreamTLSConfig.RootCAs = pool
+			log.Printf("🔒 Upstream TLS verifies against CA bundle %s", caPath)
 		}
 		if upstreamTLSSkipVerify {
 			log.Printf("🔒 Upstream TLS enabled (skip verify — NOT for production)")
@@ -194,8 +218,10 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	identity := auth.Identity
 	startupBuf = auth.Startup
 	keyAuthed := auth.Mode != authPassthrough
+	sessionKeyHash := auth.KeyHash
 	if auth.Mode == authKeyPassword {
-		msg, method := authenticateAgentKey(client, client, auth.ClaimedUser, agentKeys)
+		msg, method, kh := authenticateAgentKey(client, client, auth.ClaimedUser, agentKeys)
+		sessionKeyHash = kh
 		if msg != "" {
 			log.Printf("%s%s[REFUSED]%s %s auth=%s remote=%s", colorRed, colorBold, colorReset, msg, method, client.RemoteAddr())
 			sendStartupError(client, msg)
@@ -268,6 +294,13 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 			return
 		}
 		proto, params := parseStartupParams(startupBuf)
+		params, err = bindStartupDatabase(params)
+		if err != nil {
+			msg := keyErr("%v", err)
+			log.Printf("%s%s[REFUSED]%s agent %s: %s", colorRed, colorBold, colorReset, identity.AgentID, msg)
+			sendStartupError(client, msg)
+			return
+		}
 		params = startupSet(params, "user", creds.User)
 		params = startupSet(params, "application_name", identity.Raw)
 		startupBuf = buildStartupMessage(proto, params)
@@ -320,7 +353,7 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	var killCh chan string
 	if keyAuthed && identity != nil {
 		killCh = make(chan string, 1)
-		unregister := agentSessions.Register(identity.AgentID, pinnedRole, func(msg string) {
+		unregister := agentSessions.RegisterKey(identity.AgentID, pinnedRole, sessionKeyHash, func(msg string) {
 			select {
 			case killCh <- msg:
 			default:
@@ -539,6 +572,14 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 	// ReadyForQuery ('Z') arrives. Same shared-closure pattern as queryStartTime.
 	var inFlightFingerprint string
 	var inFlightUnderLoad float64
+	// inFlightMu guards queryStartTime and inFlight*: the request loop writes
+	// them and the response goroutine reads and resets them.
+	var inFlightMu sync.Mutex
+	setInFlight := func(fp string) {
+		inFlightMu.Lock()
+		inFlightFingerprint, inFlightUnderLoad = fp, currentUtilization()
+		inFlightMu.Unlock()
+	}
 
 	// `faultwall try` live activity feed (nil / no-op outside try mode).
 	tryConn := newTryConnState()
@@ -630,21 +671,24 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					lastTxStatus.Store(payload[0])
 					gate.txn.onReady(payload[0])
 				}
+				inFlightMu.Lock()
+				started, fp, underLoad := queryStartTime, inFlightFingerprint, inFlightUnderLoad
+				inFlightFingerprint = ""
+				queryStartTime = time.Time{}
+				inFlightMu.Unlock()
 				// Record per-query stats in agent tracker
-				if agentTracker != nil && identity != nil && !queryStartTime.IsZero() {
-					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
+				if agentTracker != nil && identity != nil && !started.IsZero() {
+					durationMs := float64(time.Since(started).Microseconds()) / 1000.0
 					agentTracker.RecordRows(identity.AgentID, int64(queryRowCount))
 					agentTracker.RecordDuration(identity.AgentID, durationMs)
 				}
 				// RFC-003: feed the measured latency to the QWM world model's
 				// per-fingerprint base-service EWMA (only learns under low load).
-				if !queryStartTime.IsZero() && inFlightFingerprint != "" {
-					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
-					recordQueryLatency(inFlightFingerprint, durationMs, inFlightUnderLoad)
+				if !started.IsZero() && fp != "" {
+					durationMs := float64(time.Since(started).Microseconds()) / 1000.0
+					recordQueryLatency(fp, durationMs, underLoad)
 				}
-				inFlightFingerprint = ""
 				queryRowCount = 0
-				queryStartTime = time.Time{}
 
 				rowCount = 0
 				rowLimitExceeded = false
@@ -678,6 +722,36 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				return
 			}
 		}
+	}
+
+	// enforcing reports whether this session must fail closed on statement
+	// state it can't policy-check: blocking enforcement, or ask-first holds
+	// that pause regardless of enforcement mode.
+	enforcing := func() bool {
+		if pe.GetEnforcement() == "enforce" {
+			return true
+		}
+		_, mode := holdRules(pe)
+		return holdsEnforced(pe, mode)
+	}
+	// refuseUncheckable ends the session rather than forwarding a statement
+	// the proxy can no longer vouch for. Earlier messages of the same batch
+	// may already be upstream, so an in-band error would desynchronize the
+	// protocol; closing is the safe outcome and the driver reconnects.
+	refuseUncheckable := func(why string) {
+		log.Printf("%s[BLOCKED]%s %s %s; closing session", colorRed, colorReset, agentLabel, why)
+		agentID, missionID := "", ""
+		if identity != nil {
+			agentID, missionID = identity.AgentID, identity.MissionID
+		}
+		pe.addViolation(PolicyViolation{
+			AgentID:   agentID,
+			MissionID: missionID,
+			Reason:    why,
+			Action:    "blocked",
+			Timestamp: time.Now(),
+		})
+		shutdownConn("FaultWall: " + why + ". Reconnect and prepare the statement again.")
 	}
 
 	for {
@@ -714,6 +788,23 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				refuseRoleChange("<FunctionCall>", "fast-path function calls are not allowed for agents with a DB role")
 				continue
 			}
+		}
+
+		// Fast-path FunctionCall names a function by OID with no SQL text, so
+		// policy, holds and blocked_functions can't vet it. Refuse it while
+		// enforcing (pinned sessions already refused it above).
+		if msgType == 'F' && enforcing() {
+			log.Printf("%s[BLOCKED]%s %s fast-path FunctionCall refused", colorRed, colorReset, agentLabel)
+			agentID, missionID := "", ""
+			if identity != nil {
+				agentID, missionID = identity.AgentID, identity.MissionID
+			}
+			pe.addViolation(PolicyViolation{AgentID: agentID, MissionID: missionID, Query: "<FunctionCall>",
+				Reason: "fast-path function calls are not allowed through FaultWall", Action: "blocked", Timestamp: time.Now()})
+			clientWriteMu.Lock()
+			_, _ = client.Write(fastPathRefusal(txStatus()))
+			clientWriteMu.Unlock()
+			continue
 		}
 
 		if msgType == 'Q' && len(payload) > 1 {
@@ -765,8 +856,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				// RFC-003: remember this fingerprint + the load it ran under so the
 				// response goroutine can record its latency into the base-service EWMA.
 				if pq != nil {
-					inFlightFingerprint = pq.Fingerprint
-					inFlightUnderLoad = currentUtilization()
+					setInFlight(pq.Fingerprint)
 				}
 				telConn.enqueue("allowed", "allow", nil, pq, query, decisionLatencyMs, nStmts)
 			}
@@ -826,12 +916,19 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					scoreQueryShadow(agentLabel, query, pq)
 				}
 				recordObservation(agentLabel, identity, query, pq, false)
-				stmts.parseTimed(stmtName, query, pq, violation, decisionLatencyMs)
+				if !stmts.parseTimed(stmtName, query, pq, violation, decisionLatencyMs) && enforcing() {
+					refuseUncheckable("too many open prepared statements on this connection")
+					return
+				}
 				if violation != nil {
 					telConn.noteParse("monitored", "flag", violation, pq, query, decisionLatencyMs)
 				} else {
 					telConn.noteParse("allowed", "allow", nil, pq, query, decisionLatencyMs)
 				}
+			} else if !stmts.parse(stmtName, "", nil, nil) && enforcing() {
+				// Empty query: harmless, but track it so its Bind/Execute is known.
+				refuseUncheckable("too many open prepared statements on this connection")
+				return
 			}
 		}
 
@@ -848,7 +945,10 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				clientWriteMu.Unlock()
 				continue
 			}
-			stmts.bind(portalName, stmtName)
+			if !stmts.bind(portalName, stmtName) && enforcing() {
+				refuseUncheckable("bind references a statement FaultWall did not check")
+				return
+			}
 		}
 
 		// Extended query protocol: type 'E' (Execute)
@@ -864,14 +964,31 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			}
 			tryConn.onExecute(agentLabel, identity, portalName)
 			st, repeat, newRun := stmts.executeRun(portalName)
+			if st == nil && enforcing() {
+				refuseUncheckable("execute references a statement FaultWall did not check")
+				return
+			}
+			// A statement prepared in an earlier batch carries a decision made
+			// under the policy of that moment. Re-check it against the live
+			// policy so a tightened permission applies to cached statements.
+			if st != nil && newRun && !st.fresh && st.query != "" && pe.GetEnforcement() == "enforce" {
+				ctx := &QueryContext{SearchPath: searchPath.Schemas()}
+				if v, _ := safeCheckQueryWithContext(pe, identity, st.query, ctx); v != nil && !v.FlagOnly {
+					v.Action = "blocked"
+					pe.addViolation(*v)
+					logBlocked(agentLabel, st.query, v)
+					telConn.emitNow("blocked", "block", v, st.pq, st.query, 0)
+					shutdownConn("FaultWall: " + v.Reason + ". This prepared statement is no longer permitted by policy.")
+					return
+				}
+			}
 			if newRun {
 				telConn.enqueueStmt(st)
 			}
 			if repeat {
 				accountRepeatExecute(pe, st, agentLabel, identity)
 				if st.violation == nil && st.pq != nil {
-					inFlightFingerprint = st.pq.Fingerprint
-					inFlightUnderLoad = currentUtilization()
+					setInFlight(st.pq.Fingerprint)
 				}
 			}
 		}
@@ -884,11 +1001,14 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 		if msgType == 'Q' || msgType == 'S' {
 			telConn.onSyncPoint()
+			stmts.syncPoint()
 		}
 
 		// Track query start time for stats
 		if msgType == 'Q' || msgType == 'E' {
+			inFlightMu.Lock()
 			queryStartTime = time.Now()
+			inFlightMu.Unlock()
 		}
 
 		// Start query timer for max_query_time_ms enforcement
@@ -930,6 +1050,23 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			return
 		}
 	}
+}
+
+// fastPathRefusal is the ErrorResponse + ReadyForQuery for a refused
+// fast-path FunctionCall. The session stays usable.
+func fastPathRefusal(txStatus byte) []byte {
+	if txStatus == 0 {
+		txStatus = 'I'
+	}
+	e := &pgproto3.ErrorResponse{
+		Severity: "ERROR",
+		Code:     "42501",
+		Message:  "[BLOCKED by FaultWall] fast-path function calls are not allowed",
+		Hint:     "Call the function from SQL (SELECT fn(...)) so FaultWall can check it against policy.",
+	}
+	buf, _ := e.Encode(nil)
+	buf, _ = (&pgproto3.ReadyForQuery{TxStatus: txStatus}).Encode(buf)
+	return buf
 }
 
 // extractParseMessage extracts statement name and query from a Parse message payload.

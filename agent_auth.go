@@ -121,6 +121,8 @@ type agentAuthDecision struct {
 	Err      string         // non-empty = refuse the connection with this message
 	// For authKeyPassword: the agent name the client claimed as `user`.
 	ClaimedUser string
+	// For authKeyToken: sha256 of the key that identified the session.
+	KeyHash string
 }
 
 // managedAppName is the label forwarded upstream for key-authenticated agents.
@@ -177,6 +179,7 @@ func startupAgentAuth(startupBuf []byte, keys *AgentKeyStore) agentAuthDecision 
 		}
 		label := managedAppName(e.Agent, identity.MissionID)
 		d.Mode = authKeyToken
+		d.KeyHash = e.KeySHA256
 		d.Identity = &AgentIdentity{AgentID: e.Agent, MissionID: nonEmpty(identity.MissionID, "default"), Raw: label}
 		d.Startup = buildStartupMessage(proto, startupSet(params, "application_name", label))
 		return d
@@ -218,34 +221,39 @@ func cleartextKeyAllowed() bool {
 // the client: SCRAM-SHA-256 when the agent's key has a verifier, otherwise
 // cleartext if (and only if) explicitly allowed. Returns "" on success or the
 // FATAL message to send. Nothing is sent upstream before this succeeds.
-func authenticateAgentKey(r io.Reader, w io.Writer, agent string, keys *AgentKeyStore) (msg string, method string) {
+// keyHash identifies the key that authenticated, so the session can be ended
+// when that specific key is revoked.
+func authenticateAgentKey(r io.Reader, w io.Writer, agent string, keys *AgentKeyStore) (msg, method, keyHash string) {
 	live, any := keys.agentState(agent)
 	if any && live == 0 {
-		return keyErr("the key for agent %q was revoked. Create a new key on the Agents page.", agent), "none"
+		return keyErr("the key for agent %q was revoked. Create a new key on the Agents page.", agent), "none", ""
 	}
 	if sk := keys.ScramKeys(agent); len(sk) > 0 {
 		err := scramServerAuth(r, w, sk[0].Scram)
 		switch {
 		case err == nil:
-			return "", "scram-sha-256"
+			return "", "scram-sha-256", sk[0].KeySHA256
 		case errors.Is(err, errScramBadProof):
-			return keyErr("wrong key for agent %q. Copy the connection string from the Agents page (keys are shown once; create a new key if this one was lost).", agent), "scram-sha-256"
+			return keyErr("wrong key for agent %q. Copy the connection string from the Agents page (keys are shown once; create a new key if this one was lost).", agent), "scram-sha-256", ""
 		default:
-			return keyErr("agent %q key authentication failed: %v", agent, err), "scram-sha-256"
+			return keyErr("agent %q key authentication failed: %v", agent, err), "scram-sha-256", ""
 		}
 	}
 	if !cleartextKeyAllowed() {
-		return keyErr("the key for agent %q was created before SCRAM support. Create a new key on the Agents page (or set FW_ALLOW_CLEARTEXT_KEY=*** on the proxy to accept it over cleartext).", agent), "none"
+		return keyErr("the key for agent %q was created before SCRAM support. Create a new key on the Agents page (or set FW_ALLOW_CLEARTEXT_KEY=*** on the proxy to accept it over cleartext).", agent), "none", ""
 	}
 	rw, ok := w.(net.Conn)
 	if !ok {
-		return keyErr("internal: cleartext auth needs a connection"), "cleartext"
+		return keyErr("internal: cleartext auth needs a connection"), "cleartext", ""
 	}
 	pw, err := requestClientPassword(rw)
 	if err != nil {
-		return keyErr("agent %q: %v", agent, err), "cleartext"
+		return keyErr("agent %q: %v", agent, err), "cleartext", ""
 	}
-	return verifyAgentPassword(agent, pw, keys), "cleartext"
+	if msg := verifyAgentPassword(agent, pw, keys); msg != "" {
+		return msg, "cleartext", ""
+	}
+	return "", "cleartext", HashAgentKey(pw)
 }
 
 // upstreamCreds is what the proxy logs in upstream with for password-mode agents.
@@ -267,6 +275,42 @@ func resolveUpstreamCreds() (upstreamCreds, bool) {
 		return upstreamCreds{User: pu, Password: os.Getenv("PGPASSWORD")}, true
 	}
 	return c, false
+}
+
+// boundUpstreamDatabase is the one database key-authenticated agents may
+// open through this proxy: FW_UPSTREAM_DATABASE, else the database in
+// DATABASE_URL. "*" (or neither set) allows any database the proxy's login
+// can reach. Without a binding an agent could change the database name in
+// its DSN and use the proxy's credentials against another database.
+func boundUpstreamDatabase() string {
+	if d := strings.TrimSpace(os.Getenv("FW_UPSTREAM_DATABASE")); d != "" {
+		if d == "*" {
+			return ""
+		}
+		return d
+	}
+	if raw := os.Getenv("DATABASE_URL"); raw != "" {
+		if u, err := url.Parse(raw); err == nil {
+			return strings.TrimPrefix(u.Path, "/")
+		}
+	}
+	return ""
+}
+
+// bindStartupDatabase applies boundUpstreamDatabase to a key-authenticated
+// startup. A missing database defaults to the bound one; a different one is
+// refused before the startup is forwarded upstream.
+func bindStartupDatabase(params []startupParam) ([]startupParam, error) {
+	bound := boundUpstreamDatabase()
+	if bound == "" {
+		return params, nil
+	}
+	for _, p := range params {
+		if p.Key == "database" && p.Val != "" && p.Val != bound {
+			return nil, fmt.Errorf("this proxy only serves database %q; the agent asked for %q. Point the agent's connection string at %q, or run a separate proxy for that database", bound, p.Val, bound)
+		}
+	}
+	return startupSet(params, "database", bound), nil
 }
 
 // requestClientPassword sends AuthenticationCleartextPassword and reads the

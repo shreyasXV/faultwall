@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,10 +28,10 @@ var (
 	predictor        *Predictor
 	agentTracker     *AgentTracker
 	policyEngine     *PolicyEngine
-	observationStore   *ObservationStore
-	qwmScorer          QWMScorer
-	qwmStateSampler    *StateSampler
-	qwmFlagThreshold   = 0.7 // shadow mode: flag but never block
+	observationStore *ObservationStore
+	qwmScorer        QWMScorer
+	qwmStateSampler  *StateSampler
+	qwmFlagThreshold = 0.7 // shadow mode: flag but never block
 )
 
 func main() {
@@ -86,7 +87,8 @@ func main() {
 	proxyModeFlag := ""
 	tlsCert := os.Getenv("TLS_CERT_FILE")
 	tlsKey := os.Getenv("TLS_KEY_FILE")
-	upstreamTLS := os.Getenv("UPSTREAM_TLS") == "true"
+	// UPSTREAM_TLS_CA (a PEM bundle, e.g. the RDS global bundle) implies upstream TLS.
+	upstreamTLS := os.Getenv("UPSTREAM_TLS") == "true" || os.Getenv("UPSTREAM_TLS_CA") != ""
 	upstreamTLSSkipVerify := os.Getenv("UPSTREAM_TLS_SKIP_VERIFY") == "true"
 	for i, arg := range os.Args[1:] {
 		switch arg {
@@ -277,53 +279,12 @@ func main() {
 		if apiPort == "" {
 			apiPort = "8080"
 		}
-		apiBind := os.Getenv("BIND_ADDR")
-		if apiBind == "" {
-			apiBind = "0.0.0.0"
-		}
+		apiBind := managementBindAddr()
 
-		mux := http.NewServeMux()
-		mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, map[string]interface{}{"status": "ok", "mode": "proxy"})
-		})
-		mux.HandleFunc("/api/firewall/agents", handleFirewallAgents)
-		mux.HandleFunc("/api/firewall/agents/", handleFirewallAgentQueries)
-		mux.HandleFunc("/api/policies", handlePolicies)
-		mux.HandleFunc("/api/policies/yaml", handlePoliciesYAML)
-		mux.HandleFunc("/api/policies/reload", handlePoliciesReload)
-		mux.HandleFunc("/api/agent-keys", handleAgentKeysStatus)
-		mux.HandleFunc("/api/violations", handleViolations)
-		mux.HandleFunc("/api/holds", bearerAuthMiddleware(handleHolds))
-		mux.HandleFunc("/api/holds/", bearerAuthMiddleware(handleHoldAction))
-		mux.HandleFunc("/api/qwm/flags", handleQWMFlags)
-		mux.HandleFunc("/api/apa/proposals", handleAPAProposals)
-		mux.HandleFunc("/api/apa/proposals/files", handleAPAProposalFiles)
-		mux.HandleFunc("/api/apa/proposals/files/", handleAPAProposalFileAction)
-		mux.HandleFunc("/api/rules/block", handleBlockRule)
-		mux.HandleFunc("/api/rules/preview", handleRulePreview)
-		mux.HandleFunc("/api/rules/create", handleRuleCreate)
-		mux.HandleFunc("/api/agents/pause/", handlePauseAgent)
-		mux.HandleFunc("/api/agents/stats", handleAgentStats)
-		mux.HandleFunc("/api/tenants", handleTenants)
-		mux.HandleFunc("/api/queries", handleQueries)
-		mux.HandleFunc("/api/config", handleConfig)
-		mux.HandleFunc("/api/export/csv", handleExportCSV)
-		mux.HandleFunc("/api/export/json", handleExportJSON)
-		mux.HandleFunc("/favicon.png", handleFavicon)
-		mux.HandleFunc("/favicon.ico", handleFavicon)
-		mux.HandleFunc("/", handleDashboard)
+		mux := proxyManagementHandler()
 
-		apiAddr := fmt.Sprintf("%s:%s", apiBind, apiPort)
-
-		// Advertise a friendly .local name via mDNS so customers open the
-		// dashboard at http://faultwall.local:PORT instead of localhost. Override
-		// with FAULTWALL_HOSTNAME. Best-effort; never blocks startup.
-		localHost := os.Getenv("FAULTWALL_HOSTNAME")
-		if localHost == "" {
-			localHost = defaultLocalHost
-		}
-		startMDNSResponder(localHost)
-		log.Printf("\U0001f4ca FaultWall dashboard: %s  (also http://localhost:%s)", localDashboardURL(localHost, apiPort), apiPort)
+		apiAddr := net.JoinHostPort(apiBind, apiPort)
+		announceManagementDashboard(apiBind, apiPort)
 		srv := &http.Server{Addr: apiAddr, Handler: mux}
 
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -508,82 +469,12 @@ Then restart PostgreSQL. FaultWall will run in degraded mode without query-level
 		return
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/favicon.png", handleFavicon)
-	mux.HandleFunc("/favicon.ico", handleFavicon)
-	mux.HandleFunc("/", handleDashboard)
-	mux.HandleFunc("/api/tenants", handleTenants)
-	mux.HandleFunc("/api/queries", handleQueries)
-	mux.HandleFunc("/api/health", handleHealth)
-	mux.HandleFunc("/api/config", handleConfig)
+	mux := dashboardManagementHandler()
 
-	// Alerts
-	mux.HandleFunc("/api/alerts", handleAlerts)
-	mux.HandleFunc("/api/alerts/history", handleAlertsHistory)
-	mux.HandleFunc("/api/alerts/rules", handleAlertsRules)
+	bindAddr := managementBindAddr()
 
-	// History / time-series
-	mux.HandleFunc("/api/history", handleHistory)
-	mux.HandleFunc("/api/history/overview", handleHistoryOverview)
-
-	// Throttle
-	mux.HandleFunc("/api/throttle/status", handleThrottleStatus)
-	mux.HandleFunc("/api/throttle/config", handleThrottleConfig)
-
-	// Cost attribution
-	mux.HandleFunc("/api/costs", handleCosts)
-
-	// Anomaly detection
-	mux.HandleFunc("/api/anomalies", handleAnomalies)
-	mux.HandleFunc("/api/anomalies/baseline", handleTenantBaseline)
-
-	// Predictions
-	mux.HandleFunc("/api/predictions", handlePredictions)
-
-	// Agent-native API
-	mux.HandleFunc("/api/agents/status", handleAgentStatus)
-	mux.HandleFunc("/api/agents/noisy", handleAgentNoisy)
-	mux.HandleFunc("/api/agents/tenant/", handleAgentTenant)
-	mux.HandleFunc("/api/agents/costs", handleAgentCosts)
-	mux.HandleFunc("/api/agents/recommendation", handleAgentRecommendation)
-	mux.HandleFunc("/api/agents/anomalies", handleAgentAnomalies)
-	mux.HandleFunc("/api/agents/predictions", handleAgentPredictions)
-
-	// Firewall: agent identity + policy enforcement
-	mux.HandleFunc("/api/firewall/agents", bearerAuthMiddleware(handleFirewallAgents))
-	mux.HandleFunc("/api/firewall/agents/", bearerAuthMiddleware(handleFirewallAgentQueries))
-	mux.HandleFunc("/api/policies", handlePolicies)
-	mux.HandleFunc("/api/policies/yaml", handlePoliciesYAML)
-	mux.HandleFunc("/api/policies/reload", bearerAuthMiddleware(handlePoliciesReload))
-	mux.HandleFunc("/api/violations", bearerAuthMiddleware(handleViolations))
-	mux.HandleFunc("/api/rules/block", bearerAuthMiddleware(handleBlockRule))
-	mux.HandleFunc("/api/rules/preview", bearerAuthMiddleware(handleRulePreview))
-	mux.HandleFunc("/api/rules/create", bearerAuthMiddleware(handleRuleCreate))
-	mux.HandleFunc("/api/agents/pause/", bearerAuthMiddleware(handlePauseAgent))
-	mux.HandleFunc("/api/agents/stats", handleAgentStats)
-	mux.HandleFunc("/api/holds", bearerAuthMiddleware(handleHolds))
-	mux.HandleFunc("/api/holds/", bearerAuthMiddleware(handleHoldAction))
-
-	// Export
-	mux.HandleFunc("/api/export/csv", handleExportCSV)
-	mux.HandleFunc("/api/export/json", handleExportJSON)
-
-	bindAddr := os.Getenv("BIND_ADDR")
-	if bindAddr == "" {
-		bindAddr = "0.0.0.0"
-	}
-
-	listenAddr := fmt.Sprintf("%s:%s", bindAddr, port)
-
-	// Advertise a friendly .local name via mDNS so customers reach the dashboard
-	// at http://faultwall.local:PORT instead of http://localhost:PORT. Override
-	// with FAULTWALL_HOSTNAME; best-effort, never blocks startup.
-	localHost := os.Getenv("FAULTWALL_HOSTNAME")
-	if localHost == "" {
-		localHost = defaultLocalHost
-	}
-	startMDNSResponder(localHost)
-	log.Printf("\U0001f6e1\ufe0f  FaultWall dashboard: %s  (also http://localhost:%s)", localDashboardURL(localHost, port), port)
+	listenAddr := net.JoinHostPort(bindAddr, port)
+	announceManagementDashboard(bindAddr, port)
 
 	srv := &http.Server{
 		Addr:    listenAddr,

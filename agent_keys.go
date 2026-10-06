@@ -187,6 +187,14 @@ func (s *AgentKeyStore) ScramKeys(agent string) []AgentKeyEntry {
 	return append([]AgentKeyEntry(nil), s.scramByAgent[agent]...)
 }
 
+// keyLive reports whether hash is a known, unrevoked key of agent.
+func (s *AgentKeyStore) keyLive(agent, hash string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, ok := s.byHash[strings.ToLower(hash)]
+	return ok && !e.Revoked && e.Agent == agent
+}
+
 // LiveKeys reports how many live (unrevoked) keys agent has, and whether
 // all of them are revoked.
 func (s *AgentKeyStore) agentState(agent string) (live int, any bool) {

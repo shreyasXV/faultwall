@@ -26,8 +26,13 @@ type preparedStmt struct {
 	violation *PolicyViolation // monitored (non-blocking) violation from Parse, or nil
 	runs      int
 	// decisionMs is the policy decision latency measured at Parse; repeat
-	// Executes reuse it for telemetry (no re-check happens on Execute).
+	// Executes reuse it for telemetry.
 	decisionMs float64
+	// fresh is true from Parse until the next Sync: the Parse-time decision
+	// is current, so an Execute in the same batch skips the policy re-check.
+	// Executes after that are re-checked against the live policy, so a
+	// permission change applies to statements the driver already cached.
+	fresh bool
 }
 
 type boundPortal struct {
@@ -38,6 +43,8 @@ type boundPortal struct {
 type stmtTracker struct {
 	stmts   map[string]*preparedStmt
 	portals map[string]*boundPortal
+	// freshSince lists statements parsed since the last Sync (see fresh).
+	freshSince []*preparedStmt
 }
 
 func newStmtTracker() *stmtTracker {
@@ -46,28 +53,42 @@ func newStmtTracker() *stmtTracker {
 
 // parse records a non-blocked Parse. Re-parsing a name (always the case for
 // the unnamed statement) starts a fresh run count.
-func (t *stmtTracker) parse(name, query string, pq *ParsedQuery, v *PolicyViolation) {
-	t.parseTimed(name, query, pq, v, 0)
+func (t *stmtTracker) parse(name, query string, pq *ParsedQuery, v *PolicyViolation) bool {
+	return t.parseTimed(name, query, pq, v, 0)
 }
 
-// parseTimed is parse plus the decision latency (for telemetry).
-func (t *stmtTracker) parseTimed(name, query string, pq *ParsedQuery, v *PolicyViolation, decisionMs float64) {
+// parseTimed is parse plus the decision latency (for telemetry). It returns
+// false when the tracker is full and the statement was NOT recorded; the
+// caller must not forward that Parse while enforcing, because a later
+// Bind/Execute of an untracked statement can't be policy-checked.
+func (t *stmtTracker) parseTimed(name, query string, pq *ParsedQuery, v *PolicyViolation, decisionMs float64) bool {
 	if _, exists := t.stmts[name]; !exists && len(t.stmts) >= maxTrackedStmts {
-		return
+		return false
 	}
 	var vc *PolicyViolation
 	if v != nil {
 		cp := *v
 		vc = &cp
 	}
-	t.stmts[name] = &preparedStmt{query: query, pq: pq, violation: vc, decisionMs: decisionMs}
+	st := &preparedStmt{query: query, pq: pq, violation: vc, decisionMs: decisionMs, fresh: true}
+	t.stmts[name] = st
+	if len(t.freshSince) < maxTrackedStmts {
+		t.freshSince = append(t.freshSince, st)
+	} else {
+		st.fresh = false // no Sync for this long: re-check on Execute
+	}
+	return true
 }
 
-func (t *stmtTracker) bind(portal, stmt string) {
+// bind records a Bind. It returns false when the portal was not recorded
+// (tracker full, or the statement is unknown to the tracker).
+func (t *stmtTracker) bind(portal, stmt string) bool {
 	if _, exists := t.portals[portal]; !exists && len(t.portals) >= maxTrackedStmts {
-		return
+		return false
 	}
 	t.portals[portal] = &boundPortal{stmt: stmt}
+	_, known := t.stmts[stmt]
+	return known
 }
 
 // execute returns the statement behind portal and whether this Execute is a
@@ -103,6 +124,14 @@ func (t *stmtTracker) close(kind byte, name string) {
 	case 'P':
 		delete(t.portals, name)
 	}
+}
+
+// syncPoint marks every Parse-time decision as no longer current.
+func (t *stmtTracker) syncPoint() {
+	for _, st := range t.freshSince {
+		st.fresh = false
+	}
+	t.freshSince = t.freshSince[:0]
 }
 
 // accountRepeatExecute logs and counts a repeat run of a cached prepared

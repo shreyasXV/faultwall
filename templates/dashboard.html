@@ -6,64 +6,49 @@
 <link rel="icon" href="/favicon.png" type="image/png">
 <title>FaultWall</title>
 <style>
-/* ── Tokens ── */
+/* ── Tokens: light, matching faultwall.com (paper, ink, deep green) ── */
 :root {
-  --accent:     #38bdf8;
-  --accent-dim: rgba(56,189,248,.10);
-  --red:        #fb7185;
-  --red-bg:     rgba(251,113,133,.08);
-  --yellow:     #fbbf24;
-  --yel-bg:     rgba(251,191,36,.08);
-  --green:      #34d399;
-  --grn-bg:     rgba(52,211,153,.08);
-  --bg:         #0c0e14;
-  --surface:    #111520;
-  --surface2:   #161b2b;
-  --border:     #1e2438;
-  --dim:        #252d44;
-  --text:       #c2cade;
-  --fg:         #c2cade;
-  --text2:      #8892a8;
-  --muted:      #4d5872;
-  --sans: system-ui,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif;
-  --mono: "SF Mono","Cascadia Code",Consolas,"Courier New",monospace;
+  --accent:     #315b40;
+  --accent-dim: #e6eee6;
+  --red:        #9e3a2c;
+  --red-bg:     #f5e4df;
+  --yellow:     #946410;
+  --yel-bg:     #f6eedb;
+  --green:      #315b40;
+  --grn-bg:     #e6eee6;
+  --bg:         #f8f7f2;
+  --surface:    #fffefa;
+  --surface2:   #f3f2ec;
+  --border:     #dcdfd5;
+  --dim:        #e9ebe3;
+  --text:       #222923;
+  --fg:         #222923;
+  --text2:      #535a51;
+  --muted:      #6f766c;
+  --sans: -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;
+  --serif: Georgia,"Times New Roman",serif;
+  --mono: ui-monospace,"SF Mono",Menlo,Consolas,monospace;
   --r: 4px;
-  --orange: #fbbf24;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg:       #f4f5f7;
-    --surface:  #ffffff;
-    --surface2: #f0f2f6;
-    --border:   #dde1ea;
-    --dim:      #e4e7ef;
-    --text:     #1c2033;
-    --fg:       #1c2033;
-    --text2:    #5a6380;
-    --muted:    #9199ad;
-  }
-}
-:root[data-theme="light"] {
-  --bg:       #f4f5f7;
-  --surface:  #ffffff;
-  --surface2: #f0f2f6;
-  --border:   #dde1ea;
-  --dim:      #e4e7ef;
-  --text:     #1c2033;
-  --fg:       #1c2033;
-  --text2:    #5a6380;
-  --muted:    #9199ad;
+  --orange: #946410;
 }
 :root[data-theme="dark"] {
-  --bg:         #0c0e14;
-  --surface:    #111520;
-  --surface2:   #161b2b;
-  --border:     #1e2438;
-  --dim:        #252d44;
-  --text:       #c2cade;
-  --fg:         #c2cade;
-  --text2:      #8892a8;
-  --muted:      #4d5872;
+  --accent:     #7fbf93;
+  --accent-dim: rgba(127,191,147,.12);
+  --red:        #f0a596;
+  --red-bg:     rgba(240,165,150,.10);
+  --yellow:     #e8c77a;
+  --yel-bg:     rgba(232,199,122,.10);
+  --green:      #7fbf93;
+  --grn-bg:     rgba(127,191,147,.10);
+  --bg:         #171b18;
+  --surface:    #1e231f;
+  --surface2:   #252b26;
+  --border:     #343b35;
+  --dim:        #2c332d;
+  --text:       #e9ebe3;
+  --fg:         #e9ebe3;
+  --text2:      #b9c0b4;
+  --muted:      #8b9387;
 }
 
 /* ── Reset ── */
@@ -103,7 +88,7 @@ code { font-family: var(--mono); font-size: 12px; }
 .logo-mark {
   width: 26px; height: 26px;
   background: var(--accent);
-  color: #0c0e14;
+  color: #fff;
   font-family: var(--mono);
   font-size: 12px;
   font-weight: 700;
@@ -189,12 +174,12 @@ code { font-family: var(--mono); font-size: 12px; }
 .enforce-badge.enforce {
   background: var(--red-bg);
   color: var(--red);
-  border: 1px solid rgba(251,113,133,.25);
+  border: 1px solid #e8c9c1;
 }
 .enforce-badge.monitor {
   background: var(--yel-bg);
   color: var(--yellow);
-  border: 1px solid rgba(251,191,36,.25);
+  border: 1px solid #e6d3a8;
 }
 .pattern-tag {
   font-size: 12px;
@@ -454,13 +439,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   letter-spacing: .4px;
   white-space: nowrap;
 }
-.badge-blocked   { background: var(--red-bg);  color: var(--red);    border: 1px solid rgba(251,113,133,.25); }
-.badge-monitored { background: var(--yel-bg);  color: var(--yellow); border: 1px solid rgba(251,191,36,.25); }
-.badge-pending   { background: rgba(56,189,248,.10); color: var(--accent); border: 1px solid rgba(56,189,248,.25); }
-.badge-risk      { background: var(--yel-bg);  color: var(--yellow); border: 1px solid rgba(251,191,36,.25); }
-.badge-ready     { background: var(--grn-bg);  color: var(--green);  border: 1px solid rgba(52,211,153,.25); }
+.badge-blocked   { background: var(--red-bg);  color: var(--red);    border: 1px solid #e8c9c1; }
+.badge-monitored { background: var(--yel-bg);  color: var(--yellow); border: 1px solid #e6d3a8; }
+.badge-pending   { background: var(--yel-bg); color: var(--yellow); border: 1px solid #e6d3a8; }
+.badge-risk      { background: var(--yel-bg);  color: var(--yellow); border: 1px solid #e6d3a8; }
+.badge-ready     { background: var(--grn-bg);  color: var(--green);  border: 1px solid #c9d9cb; }
 .badge-applied   { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
-.badge-pii       { background: var(--red-bg);  color: var(--red);    border: 1px solid rgba(251,113,133,.25); }
+.badge-pii       { background: var(--red-bg);  color: var(--red);    border: 1px solid #e8c9c1; }
 
 /* ── Event rows (violations / flags / apa) ── */
 .event-list { display: flex; flex-direction: column; }
@@ -526,14 +511,14 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   text-decoration: none;
 }
 .btn:hover { opacity: .8; text-decoration: none; }
-.btn-primary  { background: var(--accent);   color: #0c0e14;       border-color: var(--accent); }
-.btn-danger   { background: var(--red-bg);   color: var(--red);    border-color: rgba(251,113,133,.3); }
-.btn-warn     { background: var(--yel-bg);   color: var(--yellow); border-color: rgba(251,191,36,.3); }
-.btn-success  { background: var(--grn-bg);   color: var(--green);  border-color: rgba(52,211,153,.3); }
+.btn-primary  { background: var(--accent);   color: #fff;       border-color: var(--accent); }
+.btn-danger   { background: var(--red-bg);   color: var(--red);    border-color: #e8c9c1; }
+.btn-warn     { background: var(--yel-bg);   color: var(--yellow); border-color: #e6d3a8; }
+.btn-success  { background: var(--grn-bg);   color: var(--green);  border-color: #c9d9cb; }
 .btn-ghost    { background: var(--surface2); color: var(--text2);  border-color: var(--border); }
 .btn-download {
   background: var(--accent);
-  color: #0c0e14;
+  color: #fff;
   border-color: var(--accent);
   font-weight: 600;
   padding: 5px 12px;
@@ -597,9 +582,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   font-size: 13px;
 }
 .rank { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 13px; }
-.rank-1 { color: #f5c842; }
-.rank-2 { color: #9ba3b0; }
-.rank-3 { color: #b07d54; }
+.rank-1 { color: #946410; }
+.rank-2 { color: #6f766c; }
+.rank-3 { color: #8a5a35; }
 
 /* ── Cost grid ── */
 .cost-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 0; }
@@ -656,7 +641,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .trend-falling { color: var(--accent); }
 
 /* ── Modal ── */
-.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 200; align-items: center; justify-content: center; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(34,41,35,.35); z-index: 200; align-items: center; justify-content: center; }
 .modal-overlay.open { display: flex; }
 .modal { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; width: 560px; max-width: 92vw; max-height: 80vh; overflow-y: auto; }
 .modal-head { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
@@ -676,6 +661,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .proxy-overview-bar { display: none; }
 body.proxy-mode .proxy-overview-bar { display: block; }
 body.proxy-mode .sidecar-only { display: none !important; }
+body.proxy-mode #apa-section { display: none !important; }
 
 /* ── Separators ── */
 .sep { height: 1px; background: var(--border); margin: 8px 0; }
@@ -701,6 +687,12 @@ footer a:hover { color: var(--accent); }
   .topbar-kpis { display: none; }
   .kpi-strip { grid-template-columns: repeat(3,1fr); }
   main { padding: 16px 12px; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 10px 12px; gap: 8px; }
+  .topbar-right { flex-wrap: wrap; gap: 6px; }
+  .refresh-label, .theme-btn { display: none; }
+  .section-head { flex-wrap: wrap; }
+  .filter-input { max-width: 100%; }
+  table { display: block; overflow-x: auto; }
 }
 </style>
 </head>
@@ -1089,7 +1081,7 @@ footer a:hover { color: var(--accent); }
 </div>
 
 <footer>
-  FaultWall · PostgreSQL L7 firewall ·
+  FaultWall · control what your AI agents can do in Postgres ·
   <a href="/api/health">/health</a> ·
   <a href="/api/violations">/violations</a> ·
   <a href="/api/qwm/flags">/qwm/flags</a> ·
@@ -1112,7 +1104,7 @@ function toggleTheme() {
 }
 (function() {
   const saved = localStorage.getItem('fw-theme');
-  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
 })();
 
 // ── State ──────────────────────────────────────────────────────────────
@@ -1909,6 +1901,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     const h = await fetchJSON('/api/health');
     if (h.mode==='proxy') document.body.classList.add('proxy-mode');
   } catch(e) {}
+  // Database-wide stats need the sidecar monitor; in proxy mode, hide the
+  // cells that never get a value instead of showing dashes.
+  setTimeout(() => {
+    for (const c of document.querySelectorAll('#proxy-overview-bar .kpi-cell')) {
+      const v = c.querySelector('.kpi-cell-value');
+      if (v && v.id !== 'po-enforcement' && v.textContent.trim() === '—') c.style.display = 'none';
+    }
+    // Only the mode cell left (already shown in the top bar): drop the strip.
+    const bar = document.getElementById('proxy-overview-bar');
+    if (bar && [...bar.querySelectorAll('.kpi-cell')].filter(c => c.style.display !== 'none').length <= 1) bar.style.display = 'none';
+  }, 1500);
   loadPausedAgents();
   refresh();
   refreshAlerts();
