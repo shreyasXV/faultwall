@@ -30,9 +30,11 @@ func managementHandler(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 
-		if r.URL.Path == "/api/health" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-			// Do not call the dashboard's richer health handler: it includes
-			// tenant and workload data.
+		if r.URL.Path == "/api/health" && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			!authorizedManagement(r, token, configured) {
+			// Unauthenticated callers get the minimal answer: the dashboard's
+			// richer health handler includes tenant and workload data. The
+			// signed-in dashboard falls through and learns its mode (proxy).
 			writeJSON(w, map[string]string{"status": "ok"})
 			return
 		}
@@ -83,4 +85,17 @@ func managementBindAddr() string {
 		return bind
 	}
 	return "127.0.0.1"
+}
+
+// authorizedManagement reports whether r carries the operator token
+// (Bearer, or Basic with username faultwall). Same checks as the middleware.
+func authorizedManagement(r *http.Request, token string, configured bool) bool {
+	if !configured || len(r.Header.Values("Authorization")) != 1 {
+		return false
+	}
+	if bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		return subtle.ConstantTimeCompare([]byte(bearer), []byte(token)) == 1
+	}
+	user, password, ok := r.BasicAuth()
+	return ok && user == "faultwall" && subtle.ConstantTimeCompare([]byte(password), []byte(token)) == 1
 }
