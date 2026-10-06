@@ -2,7 +2,9 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"regexp"
@@ -194,6 +196,20 @@ func NewPolicyEngine() *PolicyEngine {
 	}
 
 	if err := pe.LoadFromFile(filePath); err != nil {
+		// Enrolled with a control plane and no local file: policies come from
+		// the app (Agents page), so start from a closed base instead of
+		// refusing to start. Only app-managed agents get access.
+		if errors.Is(err, fs.ErrNotExist) {
+			if _, enrolled := loadControlPlaneConfig(); enrolled {
+				log.Printf("Policy engine: no %s; using app-managed policy (agents from the control plane; everything else denied)", filePath)
+				pe.config = &PolicyConfig{
+					DefaultPolicy: "deny",
+					Agents:        make(map[string]AgentPolicy),
+					Unidentified:  UnidentifiedPolicy{Policy: "deny"},
+				}
+				return pe
+			}
+		}
 		if enforcement == "enforce" {
 			log.Fatalf("FATAL: Policy file required in enforce mode but failed to load (%v). Refusing to start — fail-closed.", err)
 		}

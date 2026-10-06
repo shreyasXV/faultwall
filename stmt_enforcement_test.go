@@ -320,3 +320,16 @@ func httptestCertPEM(t *testing.T) []byte {
 	defer srv.Close()
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
 }
+
+// An enrolled proxy with no local policy file starts on a closed base (only
+// app-managed agents get access) instead of refusing to start.
+func TestEnrolledProxyStartsWithoutPolicyFile(t *testing.T) {
+	t.Setenv("POLICY_FILE", t.TempDir()+"/missing.yaml")
+	t.Setenv("POLICY_ENFORCEMENT", "enforce")
+	t.Setenv("FAULTWALL_CONTROL_PLANE_URL", "https://cp.example.invalid")
+	t.Setenv("FAULTWALL_CONTROL_PLANE_TOKEN", "fw_test")
+	pe := NewPolicyEngine()
+	if pe.config == nil || pe.config.DefaultPolicy != "deny" || pe.config.Unidentified.Policy != "deny" {
+		t.Fatalf("want closed base policy, got %+v", pe.config)
+	}
+}
