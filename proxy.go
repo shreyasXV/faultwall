@@ -548,6 +548,14 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 	// ReadyForQuery ('Z') arrives. Same shared-closure pattern as queryStartTime.
 	var inFlightFingerprint string
 	var inFlightUnderLoad float64
+	// inFlightMu guards queryStartTime and inFlight*: the request loop writes
+	// them and the response goroutine reads and resets them.
+	var inFlightMu sync.Mutex
+	setInFlight := func(fp string) {
+		inFlightMu.Lock()
+		inFlightFingerprint, inFlightUnderLoad = fp, currentUtilization()
+		inFlightMu.Unlock()
+	}
 
 	// `faultwall try` live activity feed (nil / no-op outside try mode).
 	tryConn := newTryConnState()
@@ -639,21 +647,24 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					lastTxStatus.Store(payload[0])
 					gate.txn.onReady(payload[0])
 				}
+				inFlightMu.Lock()
+				started, fp, underLoad := queryStartTime, inFlightFingerprint, inFlightUnderLoad
+				inFlightFingerprint = ""
+				queryStartTime = time.Time{}
+				inFlightMu.Unlock()
 				// Record per-query stats in agent tracker
-				if agentTracker != nil && identity != nil && !queryStartTime.IsZero() {
-					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
+				if agentTracker != nil && identity != nil && !started.IsZero() {
+					durationMs := float64(time.Since(started).Microseconds()) / 1000.0
 					agentTracker.RecordRows(identity.AgentID, int64(queryRowCount))
 					agentTracker.RecordDuration(identity.AgentID, durationMs)
 				}
 				// RFC-003: feed the measured latency to the QWM world model's
 				// per-fingerprint base-service EWMA (only learns under low load).
-				if !queryStartTime.IsZero() && inFlightFingerprint != "" {
-					durationMs := float64(time.Since(queryStartTime).Microseconds()) / 1000.0
-					recordQueryLatency(inFlightFingerprint, durationMs, inFlightUnderLoad)
+				if !started.IsZero() && fp != "" {
+					durationMs := float64(time.Since(started).Microseconds()) / 1000.0
+					recordQueryLatency(fp, durationMs, underLoad)
 				}
-				inFlightFingerprint = ""
 				queryRowCount = 0
-				queryStartTime = time.Time{}
 
 				rowCount = 0
 				rowLimitExceeded = false
@@ -821,8 +832,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				// RFC-003: remember this fingerprint + the load it ran under so the
 				// response goroutine can record its latency into the base-service EWMA.
 				if pq != nil {
-					inFlightFingerprint = pq.Fingerprint
-					inFlightUnderLoad = currentUtilization()
+					setInFlight(pq.Fingerprint)
 				}
 				telConn.enqueue("allowed", "allow", nil, pq, query, decisionLatencyMs, nStmts)
 			}
@@ -954,8 +964,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			if repeat {
 				accountRepeatExecute(pe, st, agentLabel, identity)
 				if st.violation == nil && st.pq != nil {
-					inFlightFingerprint = st.pq.Fingerprint
-					inFlightUnderLoad = currentUtilization()
+					setInFlight(st.pq.Fingerprint)
 				}
 			}
 		}
@@ -973,7 +982,9 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 		// Track query start time for stats
 		if msgType == 'Q' || msgType == 'E' {
+			inFlightMu.Lock()
 			queryStartTime = time.Now()
+			inFlightMu.Unlock()
 		}
 
 		// Start query timer for max_query_time_ms enforcement
