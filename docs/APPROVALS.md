@@ -23,8 +23,11 @@ CTE (`WITH x AS (UPDATE orders ...) SELECT ...`) or in `EXPLAIN ANALYZE` is stil
 held. `UPDATE customers ... FROM orders` is not held by an `orders` rule,
 because it reads `orders` but writes `customers`.
 
-Quick try: `faultwall try postgres://... --hold 'UPDATE,DELETE:orders'`, then
-`POST http://127.0.0.1:8080/api/holds/{id}/approve` (or `/deny`).
+Quick try: first configure the operator's `FAULTWALL_API_TOKEN` as described
+under [operator access](../README.md#operator-access), then run
+`faultwall try postgres://... --hold 'UPDATE,DELETE:orders'`.
+Decide with `POST http://127.0.0.1:8080/api/holds/{id}/approve` (or `/deny`),
+sending `Authorization: Bearer <token>`.
 Env shorthand: `FW_HOLD_RULES='UPDATE,DELETE:orders;WRITE@support-agent'`.
 
 ## What the agent sees
@@ -63,10 +66,15 @@ Env shorthand: `FW_HOLD_RULES='UPDATE,DELETE:orders;WRITE@support-agent'`.
    proxy's own timer stays authoritative. Outcomes the proxy decided itself
    (timeout, cancel, client gone, local API) are reported back via
    `/v1/holds/{id}/resolve`, so the queue and Slack never show a stale "pending".
-2. **Local API** (always on, the fallback, and the only path in `try` mode
+2. **Local API** (when a management token is configured, the fallback, and the only path in `try` mode
    without a control plane): `GET /api/holds`, `POST /api/holds/{id}/approve|deny`
    with optional `{"by":"...","reason":"..."}`. Protected by `FAULTWALL_API_TOKEN`
-   when that is set.
+   in every mode. Set it in the operator environment before startup and send
+   `Authorization: Bearer <token>`. Without a configured token, local management
+   returns 503; a missing/wrong client credential returns 401. Only
+   `GET`/`HEAD /api/health` is public. Management binds to loopback by default,
+   including in containers. See [operator access](../README.md#operator-access)
+   for browser login, Docker binding, and remote tunnels.
 
 `FAULTWALL_APPROVALS=local` keeps holds on the box (no control plane).
 

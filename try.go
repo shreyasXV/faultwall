@@ -206,7 +206,15 @@ Flags:
 
 Without --token, try uses FAULTWALL_CONTROL_PLANE_URL/_TOKEN or the
 [control_plane] section install.sh writes to ~/.faultwall/config.toml.
-Not enrolled: nothing leaves this machine.`)
+Not enrolled: nothing leaves this machine.
+
+Local management (live view, query history, policies, and approvals) requires
+FAULTWALL_API_TOKEN. Without it, only GET /api/health is available locally.
+Browser login: username faultwall, password your FAULTWALL_API_TOKEN.
+API clients: Authorization: Bearer <FAULTWALL_API_TOKEN>.
+Keep this token in the operator's environment, separate from agent credentials.
+The UI binds to 127.0.0.1 even in containers; BIND_ADDR explicitly overrides it.
+Use a trusted tunnel for remote browser management; remote API access needs TLS.`)
 }
 
 // upstreamTarget is the parsed DATABASE_URL.
@@ -604,7 +612,7 @@ func maskURLPassword(s string) string {
 	return s
 }
 
-func tryMux(info *tryInfo) *http.ServeMux {
+func tryMux(info *tryInfo) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/try" {
@@ -649,7 +657,7 @@ func tryMux(info *tryInfo) *http.ServeMux {
 	mux.HandleFunc("/api/config", handleConfig)
 	mux.HandleFunc("/favicon.png", handleFavicon)
 	mux.HandleFunc("/favicon.ico", handleFavicon)
-	return mux
+	return managementHandler(mux)
 }
 
 // tryControlPlane resolves the control-plane config for try: --token /
@@ -856,8 +864,8 @@ func runTry(args []string) error {
 		}
 	}()
 
-	// Live view.
-	uiHost, _, _ := net.SplitHostPort(opts.Listen)
+	// Live view: management does not inherit the agent-facing SQL bind address.
+	uiHost := managementBindAddr()
 	uiLn, err := listenWithFallback(net.JoinHostPort(uiHost, strconv.Itoa(opts.UIPort)))
 	if err != nil {
 		return fmt.Errorf("could not open live-view port: %v", err)

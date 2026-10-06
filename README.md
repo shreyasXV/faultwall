@@ -113,6 +113,10 @@ Agents connect to port 5433 instead of 5432. That's the only change.
 
 Watch-only first? Add `--mode monitor` (or set `POLICY_ENFORCEMENT=monitor`): same parsing and logging, violations are recorded as `monitored`, nothing is blocked.
 
+The SQL proxy runs without a management token. To use the local dashboard,
+policy API, or local approvals, set `FAULTWALL_API_TOKEN` in the operator's
+environment before starting it; see [operator access](#operator-access).
+
 ### 📊 Monitor Mode (Sidecar)
 
 FaultWall connects to your database as a read-only sidecar, polls `pg_stat_activity`, and logs violations. Good for visibility without being in the data path.
@@ -130,15 +134,30 @@ POLICY_FILE=./policies.yaml \
 
 ---
 
-## Try it in 60 seconds (one command, no YAML)
+## Try it in 60 seconds (no YAML)
+
+First choose a long random management token in your password manager. In an
+operator-only **Bash** shell, paste it at the prompt below; input is hidden.
+Keep this shell and token separate from your agent's environment.
 
 ```bash
+read -r -s -p "Operator management token: " FAULTWALL_API_TOKEN
+printf '\n'
+export FAULTWALL_API_TOKEN
+
 # Demo: bundled Postgres + two scripted agents, live view at http://localhost:8080
 curl -fsSL https://app.faultwall.com/try.sh | bash
 
 # Your database (monitor mode: observes and flags, never blocks)
 curl -fsSL https://app.faultwall.com/try.sh | bash -s -- "postgres://user:pass@host:5432/db"
 ```
+
+The browser asks for username **`faultwall`** and your management token as the
+password. This is separate from the control-plane enrollment `--token`.
+Without `FAULTWALL_API_TOKEN`, the SQL proxy still runs, but the local UI and
+management API return **503**; only `GET`/`HEAD /api/health` stay public.
+No anonymous read-only UI is provided because its queries, policies, and
+connection details are sensitive.
 
 It prints a connection string to give your agent (`postgres://…@localhost:5433/db?application_name=agent:my-agent:mission:default`)
 and opens a live view of every query, per agent, with what FaultWall *would* have flagged:
@@ -149,8 +168,22 @@ and opens a live view of every query, per agent, with what FaultWall *would* hav
 - reads of secret-looking columns (`password`, `token`, `secret`, `ssn`, `api_key`…)
 - dangerous server functions (`pg_read_file`, `dblink`, `lo_export`…)
 
-Already installed? `faultwall try [postgres://…]`. With Docker:
-`docker run --rm -it -p 5433:5433 -p 8080:8080 ghcr.io/shreyasxv/faultwall try "postgres://user:pass@host.docker.internal:5432/db"`.
+Already installed? With the same operator environment, run
+`faultwall try [postgres://…]`. With Docker:
+
+```bash
+docker run --rm -it \
+  -e FAULTWALL_API_TOKEN -e BIND_ADDR=0.0.0.0 \
+  -p 127.0.0.1:5433:5433 -p 127.0.0.1:8080:8080 \
+  ghcr.io/shreyasxv/faultwall try "postgres://user:pass@host.docker.internal:5432/db"
+```
+
+Management defaults to `127.0.0.1`, including **inside containers**, independently
+of the SQL `--listen` address. Docker port publication alone cannot reach a
+container's loopback listener. The example explicitly binds management to the
+container interfaces and publishes it only on the host's loopback address;
+the token remains required. Use a [tunnel](#operator-access) to open a remote
+host's dashboard.
 
 **Name your agent.** Keep `application_name=agent:<name>:mission:<task>` on whatever connection string your agent uses, or its queries show up as `unknown`. Most drivers take it as a URL param or a keyword:
 
@@ -366,7 +399,8 @@ POLICY_ENFORCEMENT=monitor \
 
 ## Dashboard
 
-Available in both modes at `http://localhost:8080`:
+Available in both modes at `http://localhost:8080` when `FAULTWALL_API_TOKEN`
+is configured:
 
 | Panel | What you see |
 |-------|-------------|
@@ -377,6 +411,60 @@ Available in both modes at `http://localhost:8080`:
 | **Anomalies** | Statistical deviations from baseline |
 | **Predictions** | Trend forecasts and breach warnings |
 | **APA Proposals** | Policy changes the Autonomous Policy Agent proposes for review |
+
+### Operator access
+
+All local management routes require the same operator token in proxy, monitor,
+and `try` mode: query/history reads, policy downloads and changes, holds,
+exports, and the dashboard itself. Set a long random `FAULTWALL_API_TOKEN`
+in the proxy process's environment before startup. For an interactive Bash
+session, paste a token from your password manager without echoing it:
+
+```bash
+read -r -s -p "Operator management token: " FAULTWALL_API_TOKEN
+printf '\n'
+export FAULTWALL_API_TOKEN
+./faultwall --proxy --listen :5433 --upstream localhost:5432 --policies ./policies.yaml
+```
+
+Use username `faultwall` and that token as the password in the browser's login
+prompt. API clients use `Authorization: Bearer <token>`:
+
+```bash
+curl -fsS -H "Authorization: Bearer $FAULTWALL_API_TOKEN" \
+  http://127.0.0.1:8080/api/holds
+curl -fsS -X POST -H "Authorization: Bearer $FAULTWALL_API_TOKEN" \
+  http://127.0.0.1:8080/api/holds/HOLD_ID/approve
+```
+
+An absent/blank server token disables local management with 503. A missing or
+incorrect client credential returns 401. The SQL data path and enrolled
+control-plane approval path can still run without a local management token.
+The public health endpoint returns only `{"status":"ok"}`. Restart the process
+to change its management token.
+
+Management binds to `127.0.0.1` by default; `BIND_ADDR` explicitly overrides it
+in every mode, including `try`. Loopback access still requires authentication,
+so an agent sharing the host cannot approve work without the token. Keep the
+management credential, operator process environment, and Docker administration
+access out of the agent's reach. Give agents only their intended agent
+credentials.
+
+For a remote browser, keep management on loopback and forward it over SSH:
+
+```bash
+ssh -N -L 127.0.0.1:18080:127.0.0.1:8080 operator@faultwall-host
+# Open http://127.0.0.1:18080 on your workstation and use the same browser login.
+```
+
+Explicit remote API access needs a trusted tunnel or a TLS reverse proxy; do
+not expose the HTTP management listener directly to an untrusted network.
+Browser mutations require an exact matching Origin (scheme, host, and port)
+as well as the token. TLS termination in front of an HTTP backend does not
+satisfy that browser check: use the SSH tunnel for the browser, or Bearer
+authentication for API clients through TLS. Forwarded headers do not bypass
+the check. Browser credentials are cached by the browser; close its authenticated
+session when finished.
 
 ### APA review: PR mode vs file-drop mode
 
@@ -420,22 +508,31 @@ services:
 
   faultwall:
     image: ghcr.io/shreyasxv/faultwall:latest
-    command: ["./faultwall", "--proxy", "--listen", ":5433", "--upstream", "postgres:5432", "--policies", "/etc/faultwall/policies.yaml"]
+    command: ["--proxy", "--listen", ":5433", "--upstream", "postgres:5432", "--policies", "/etc/faultwall/policies.yaml"]
     environment:
       POLICY_ENFORCEMENT: enforce
+      BIND_ADDR: "0.0.0.0" # container listener; host publication stays on loopback
+      FAULTWALL_API_TOKEN: "${FAULTWALL_API_TOKEN:?Set FAULTWALL_API_TOKEN in your operator shell}"
     volumes:
       - ./policies.yaml:/etc/faultwall/policies.yaml:ro
     ports:
-      - "5433:5433"
-      - "8080:8080"
+      - "127.0.0.1:5433:5433"
+      - "127.0.0.1:8080:8080"
     depends_on:
       - postgres
 ```
 
 ```bash
+# First export FAULTWALL_API_TOKEN in the operator shell as shown above.
 docker compose up -d
 # Agents connect to localhost:5433
+# Operator opens localhost:8080 (username faultwall, password the management token).
 ```
+
+This UI-enabled example requires the token explicitly and publishes management
+only on host loopback. For a headless proxy, omit the management token, bind
+override, and port 8080 publication; the SQL listener still runs. For a remote
+operator, use the SSH tunnel above.
 
 ---
 
