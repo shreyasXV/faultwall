@@ -91,8 +91,13 @@ fi
 
 [[ "${FAULTWALL_NO_RUN:-0}" == "1" ]] && { say "Installed. Run: $BIN try"; exit 0; }
 
+# The binary must start on this machine (e.g. libc mismatch) — show why if not.
+if ! HELP_OUT=$("$BIN" help 2>&1); then
+  printf '%s\n' "$HELP_OUT" | head -5 >&2
+  die "the FaultWall binary at $BIN can't run on this machine (output above). Please send this output to the FaultWall team"
+fi
 # Releases before `try` existed fall through to legacy monitor mode — fail clearly.
-if ! "$BIN" help 2>/dev/null | grep -q '^  try '; then
+if ! printf '%s\n' "$HELP_OUT" | grep -q '^  try '; then
   die "FaultWall ${VERSION} predates 'faultwall try' — set FAULTWALL_VERSION to a newer release"
 fi
 

@@ -16,9 +16,10 @@ import (
 )
 
 type agentSession struct {
-	agent string
-	role  string // db_role the session was pinned to ("" = none)
-	kill  func(msg string)
+	agent   string
+	role    string // db_role the session was pinned to ("" = none)
+	keyHash string // key that authenticated the session ("" = unknown)
+	kill    func(msg string)
 }
 
 type agentSessionRegistry struct {
@@ -32,10 +33,17 @@ var agentSessions = &agentSessionRegistry{byID: map[uint64]agentSession{}}
 // Register adds a live session; call the returned func when it ends.
 // role is the db_role the session was pinned to ("" = none).
 func (r *agentSessionRegistry) Register(agent, role string, kill func(msg string)) func() {
+	return r.RegisterKey(agent, role, "", kill)
+}
+
+// RegisterKey is Register for a session authenticated by the key with
+// sha256 keyHash: the session ends when that key is revoked, even if the
+// agent has another live key (e.g. revoked and re-created under the same name).
+func (r *agentSessionRegistry) RegisterKey(agent, role, keyHash string, kill func(msg string)) func() {
 	r.mu.Lock()
 	r.next++
 	id := r.next
-	r.byID[id] = agentSession{agent: agent, role: role, kill: kill}
+	r.byID[id] = agentSession{agent: agent, role: role, keyHash: keyHash, kill: kill}
 	r.mu.Unlock()
 	return func() {
 		r.mu.Lock()
@@ -57,7 +65,8 @@ func (r *agentSessionRegistry) Count(agent string) int {
 	return n
 }
 
-// KillRevoked ends every session whose agent has no live key in keys, or
+// KillRevoked ends every session whose authenticating key is no longer live,
+// whose agent has no live key in keys, or
 // whose agent's db_role differs from the role the session was pinned to.
 // Returns how many sessions were ended.
 func (r *agentSessionRegistry) KillRevoked(keys *AgentKeyStore) int {
@@ -68,7 +77,10 @@ func (r *agentSessionRegistry) KillRevoked(keys *AgentKeyStore) int {
 	r.mu.Lock()
 	var victims []victim
 	for id, s := range r.byID {
-		if live, _ := keys.agentState(s.agent); live == 0 {
+		if s.keyHash != "" && !keys.keyLive(s.agent, s.keyHash) {
+			victims = append(victims, victim{s, false})
+			delete(r.byID, id)
+		} else if live, _ := keys.agentState(s.agent); live == 0 {
 			victims = append(victims, victim{s, false})
 			delete(r.byID, id)
 		} else if keys.DBRole(s.agent) != s.role {

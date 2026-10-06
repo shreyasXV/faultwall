@@ -13,17 +13,22 @@ jobs:
     strategy:
       matrix:
         include:
+          # Linux: static musl binaries built in golang:alpine, so they run on
+          # any glibc (Amazon Linux 2, RHEL 8, Ubuntu 20.04) and on Alpine.
+          # Same recipe as the Dockerfile.
           - os: ubuntu-latest
             goos: linux
             goarch: amd64
-          - os: ubuntu-latest
+          - os: ubuntu-24.04-arm
             goos: linux
             goarch: arm64
-            cc: aarch64-linux-gnu-gcc
-            apt: gcc-aarch64-linux-gnu
           - os: macos-14         # Apple Silicon
             goos: darwin
             goarch: arm64
+          - os: macos-14         # Intel Macs, cross-compiled with clang
+            goos: darwin
+            goarch: amd64
+            cc: clang -arch x86_64
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -32,17 +37,31 @@ jobs:
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
+        if: matrix.goos == 'darwin'
         with:
           go-version: '1.25'
           check-latest: true
 
-      - name: Install cross-compiler (arm64 linux only)
-        if: matrix.apt != ''
+      - name: Build binary (linux, static musl)
+        if: matrix.goos == 'linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.apt }}
+          VERSION=${GITHUB_REF#refs/tags/}
+          mkdir -p dist
+          out="faultwall-${VERSION}-linux-${{ matrix.goarch }}"
+          docker run --rm -v "$PWD":/src -w /src golang:1.25-alpine sh -c "
+            apk add --no-cache gcc musl-dev git >/dev/null &&
+            git config --global --add safe.directory /src &&
+            CGO_ENABLED=1 GOOS=linux go build -trimpath \
+              -ldflags \"-s -w -X main.Version=${VERSION} -linkmode external -extldflags '-static'\" \
+              -o dist/${out} ."
+          sudo chown -R "$(id -u)" dist
+          file "dist/${out}" | tee /dev/stderr | grep -q 'statically linked'
+          (cd dist && tar -czf "${out}.tar.gz" "${out}" && rm "${out}")
+          (cd dist && sha256sum "${out}.tar.gz" > "${out}.sha256")
+          ls -la dist/
 
-      - name: Build binary
+      - name: Build binary (darwin)
+        if: matrix.goos == 'darwin'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -56,7 +75,6 @@ jobs:
             -ldflags "-s -w -X main.Version=${VERSION}" \
             -o "dist/${out}" .
           (cd dist && tar -czf "${out}.tar.gz" "${out}" && rm "${out}")
-          # Per-file checksum, joined at the end
           (cd dist && shasum -a 256 "${out}.tar.gz" > "${out}.sha256")
           ls -la dist/
 

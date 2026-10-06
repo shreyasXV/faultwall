@@ -254,3 +254,39 @@ func TestKeyAgentRefusedForOtherDatabase(t *testing.T) {
 		t.Fatalf("upstream must not receive anything, saw %q", mt)
 	}
 }
+
+// Fast-path FunctionCall carries no SQL, so it is refused for every enforced
+// session, not only role-pinned ones (review finding: write by function OID).
+func TestFastPathFunctionCallRefusedWhenEnforcing(t *testing.T) {
+	a, up, _ := enforcedSession(t)
+	writeWireMessage(a, 'F', []byte{0, 0, 0x08, 0x2a, 0, 0, 0, 0, 0, 1})
+	types, body := readUntilZ(t, a)
+	if types != "EZ" || !strings.Contains(body, "fast-path function calls are not allowed") {
+		t.Fatalf("got %q %q", types, body)
+	}
+	sendQ(a, "SELECT 1")
+	if types, _ := readUntilZ(t, a); types != "CZ" {
+		t.Fatalf("session must stay usable, got %q", types)
+	}
+	if _, mt := up.seen(); countType(mt, 'F') != 0 {
+		t.Fatalf("FunctionCall reached upstream: %q", mt)
+	}
+}
+
+// Revoking a key and re-creating the agent under the same name must still end
+// sessions opened with the old key.
+func TestRevokedKeySessionEndsWhenAgentRecreated(t *testing.T) {
+	ks := NewAgentKeyStore()
+	ks.Replace([]AgentKeyEntry{{Agent: "a", KeySHA256: HashAgentKey("fw_ak_old")}})
+	r := &agentSessionRegistry{byID: map[uint64]agentSession{}}
+	killed := map[string]string{}
+	r.RegisterKey("a", "", HashAgentKey("fw_ak_old"), func(m string) { killed["old"] = m })
+	ks.Replace([]AgentKeyEntry{
+		{Agent: "a", KeySHA256: HashAgentKey("fw_ak_old"), Revoked: true},
+		{Agent: "a", KeySHA256: HashAgentKey("fw_ak_new")},
+	})
+	r.RegisterKey("a", "", HashAgentKey("fw_ak_new"), func(m string) { killed["new"] = m })
+	if n := r.KillRevoked(ks); n != 1 || killed["old"] == "" || killed["new"] != "" {
+		t.Fatalf("n=%d killed=%v", n, killed)
+	}
+}

@@ -194,8 +194,10 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	identity := auth.Identity
 	startupBuf = auth.Startup
 	keyAuthed := auth.Mode != authPassthrough
+	sessionKeyHash := auth.KeyHash
 	if auth.Mode == authKeyPassword {
-		msg, method := authenticateAgentKey(client, client, auth.ClaimedUser, agentKeys)
+		msg, method, kh := authenticateAgentKey(client, client, auth.ClaimedUser, agentKeys)
+		sessionKeyHash = kh
 		if msg != "" {
 			log.Printf("%s%s[REFUSED]%s %s auth=%s remote=%s", colorRed, colorBold, colorReset, msg, method, client.RemoteAddr())
 			sendStartupError(client, msg)
@@ -327,7 +329,7 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 	var killCh chan string
 	if keyAuthed && identity != nil {
 		killCh = make(chan string, 1)
-		unregister := agentSessions.Register(identity.AgentID, pinnedRole, func(msg string) {
+		unregister := agentSessions.RegisterKey(identity.AgentID, pinnedRole, sessionKeyHash, func(msg string) {
 			select {
 			case killCh <- msg:
 			default:
@@ -753,6 +755,23 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			}
 		}
 
+		// Fast-path FunctionCall names a function by OID with no SQL text, so
+		// policy, holds and blocked_functions can't vet it. Refuse it while
+		// enforcing (pinned sessions already refused it above).
+		if msgType == 'F' && enforcing() {
+			log.Printf("%s[BLOCKED]%s %s fast-path FunctionCall refused", colorRed, colorReset, agentLabel)
+			agentID, missionID := "", ""
+			if identity != nil {
+				agentID, missionID = identity.AgentID, identity.MissionID
+			}
+			pe.addViolation(PolicyViolation{AgentID: agentID, MissionID: missionID, Query: "<FunctionCall>",
+				Reason: "fast-path function calls are not allowed through FaultWall", Action: "blocked", Timestamp: time.Now()})
+			clientWriteMu.Lock()
+			_, _ = client.Write(fastPathRefusal(txStatus()))
+			clientWriteMu.Unlock()
+			continue
+		}
+
 		if msgType == 'Q' && len(payload) > 1 {
 			query := string(payload[:len(payload)-1])
 			// REAL-F2: track per-connection search_path BEFORE the policy
@@ -996,6 +1015,23 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			return
 		}
 	}
+}
+
+// fastPathRefusal is the ErrorResponse + ReadyForQuery for a refused
+// fast-path FunctionCall. The session stays usable.
+func fastPathRefusal(txStatus byte) []byte {
+	if txStatus == 0 {
+		txStatus = 'I'
+	}
+	e := &pgproto3.ErrorResponse{
+		Severity: "ERROR",
+		Code:     "42501",
+		Message:  "[BLOCKED by FaultWall] fast-path function calls are not allowed",
+		Hint:     "Call the function from SQL (SELECT fn(...)) so FaultWall can check it against policy.",
+	}
+	buf, _ := e.Encode(nil)
+	buf, _ = (&pgproto3.ReadyForQuery{TxStatus: txStatus}).Encode(buf)
+	return buf
 }
 
 // extractParseMessage extracts statement name and query from a Parse message payload.

@@ -12,7 +12,6 @@ RUN go mod download
 COPY *.go ./
 COPY policygen/ ./policygen/
 COPY internal/ ./internal/
-COPY cmd/ ./cmd/
 COPY templates/ ./templates/
 COPY assets/ ./assets/
 COPY policies.yaml ./
