@@ -269,6 +269,42 @@ func resolveUpstreamCreds() (upstreamCreds, bool) {
 	return c, false
 }
 
+// boundUpstreamDatabase is the one database key-authenticated agents may
+// open through this proxy: FW_UPSTREAM_DATABASE, else the database in
+// DATABASE_URL. "*" (or neither set) allows any database the proxy's login
+// can reach. Without a binding an agent could change the database name in
+// its DSN and use the proxy's credentials against another database.
+func boundUpstreamDatabase() string {
+	if d := strings.TrimSpace(os.Getenv("FW_UPSTREAM_DATABASE")); d != "" {
+		if d == "*" {
+			return ""
+		}
+		return d
+	}
+	if raw := os.Getenv("DATABASE_URL"); raw != "" {
+		if u, err := url.Parse(raw); err == nil {
+			return strings.TrimPrefix(u.Path, "/")
+		}
+	}
+	return ""
+}
+
+// bindStartupDatabase applies boundUpstreamDatabase to a key-authenticated
+// startup. A missing database defaults to the bound one; a different one is
+// refused before the startup is forwarded upstream.
+func bindStartupDatabase(params []startupParam) ([]startupParam, error) {
+	bound := boundUpstreamDatabase()
+	if bound == "" {
+		return params, nil
+	}
+	for _, p := range params {
+		if p.Key == "database" && p.Val != "" && p.Val != bound {
+			return nil, fmt.Errorf("this proxy only serves database %q; the agent asked for %q. Point the agent's connection string at %q, or run a separate proxy for that database", bound, p.Val, bound)
+		}
+	}
+	return startupSet(params, "database", bound), nil
+}
+
 // requestClientPassword sends AuthenticationCleartextPassword and reads the
 // client's PasswordMessage.
 func requestClientPassword(client net.Conn) (string, error) {

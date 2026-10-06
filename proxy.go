@@ -268,6 +268,13 @@ func handleProxyConn(client net.Conn, upstreamAddr string, pe *PolicyEngine, tls
 			return
 		}
 		proto, params := parseStartupParams(startupBuf)
+		params, err = bindStartupDatabase(params)
+		if err != nil {
+			msg := keyErr("%v", err)
+			log.Printf("%s%s[REFUSED]%s agent %s: %s", colorRed, colorBold, colorReset, identity.AgentID, msg)
+			sendStartupError(client, msg)
+			return
+		}
 		params = startupSet(params, "user", creds.User)
 		params = startupSet(params, "application_name", identity.Raw)
 		startupBuf = buildStartupMessage(proto, params)
@@ -680,6 +687,36 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 		}
 	}
 
+	// enforcing reports whether this session must fail closed on statement
+	// state it can't policy-check: blocking enforcement, or ask-first holds
+	// that pause regardless of enforcement mode.
+	enforcing := func() bool {
+		if pe.GetEnforcement() == "enforce" {
+			return true
+		}
+		_, mode := holdRules(pe)
+		return holdsEnforced(pe, mode)
+	}
+	// refuseUncheckable ends the session rather than forwarding a statement
+	// the proxy can no longer vouch for. Earlier messages of the same batch
+	// may already be upstream, so an in-band error would desynchronize the
+	// protocol; closing is the safe outcome and the driver reconnects.
+	refuseUncheckable := func(why string) {
+		log.Printf("%s[BLOCKED]%s %s %s; closing session", colorRed, colorReset, agentLabel, why)
+		agentID, missionID := "", ""
+		if identity != nil {
+			agentID, missionID = identity.AgentID, identity.MissionID
+		}
+		pe.addViolation(PolicyViolation{
+			AgentID:   agentID,
+			MissionID: missionID,
+			Reason:    why,
+			Action:    "blocked",
+			Timestamp: time.Now(),
+		})
+		shutdownConn("FaultWall: " + why + ". Reconnect and prepare the statement again.")
+	}
+
 	for {
 		msgType, payload, err := gate.next()
 		if err != nil {
@@ -826,12 +863,19 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 					scoreQueryShadow(agentLabel, query, pq)
 				}
 				recordObservation(agentLabel, identity, query, pq, false)
-				stmts.parseTimed(stmtName, query, pq, violation, decisionLatencyMs)
+				if !stmts.parseTimed(stmtName, query, pq, violation, decisionLatencyMs) && enforcing() {
+					refuseUncheckable("too many open prepared statements on this connection")
+					return
+				}
 				if violation != nil {
 					telConn.noteParse("monitored", "flag", violation, pq, query, decisionLatencyMs)
 				} else {
 					telConn.noteParse("allowed", "allow", nil, pq, query, decisionLatencyMs)
 				}
+			} else if !stmts.parse(stmtName, "", nil, nil) && enforcing() {
+				// Empty query: harmless, but track it so its Bind/Execute is known.
+				refuseUncheckable("too many open prepared statements on this connection")
+				return
 			}
 		}
 
@@ -848,7 +892,10 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 				clientWriteMu.Unlock()
 				continue
 			}
-			stmts.bind(portalName, stmtName)
+			if !stmts.bind(portalName, stmtName) && enforcing() {
+				refuseUncheckable("bind references a statement FaultWall did not check")
+				return
+			}
 		}
 
 		// Extended query protocol: type 'E' (Execute)
@@ -864,6 +911,24 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 			}
 			tryConn.onExecute(agentLabel, identity, portalName)
 			st, repeat, newRun := stmts.executeRun(portalName)
+			if st == nil && enforcing() {
+				refuseUncheckable("execute references a statement FaultWall did not check")
+				return
+			}
+			// A statement prepared in an earlier batch carries a decision made
+			// under the policy of that moment. Re-check it against the live
+			// policy so a tightened permission applies to cached statements.
+			if st != nil && newRun && !st.fresh && st.query != "" && pe.GetEnforcement() == "enforce" {
+				ctx := &QueryContext{SearchPath: searchPath.Schemas()}
+				if v, _ := safeCheckQueryWithContext(pe, identity, st.query, ctx); v != nil && !v.FlagOnly {
+					v.Action = "blocked"
+					pe.addViolation(*v)
+					logBlocked(agentLabel, st.query, v)
+					telConn.emitNow("blocked", "block", v, st.pq, st.query, 0)
+					shutdownConn("FaultWall: " + v.Reason + ". This prepared statement is no longer permitted by policy.")
+					return
+				}
+			}
 			if newRun {
 				telConn.enqueueStmt(st)
 			}
@@ -884,6 +949,7 @@ func proxyQueryLoop(client, upstream net.Conn, identity *AgentIdentity, agentLab
 
 		if msgType == 'Q' || msgType == 'S' {
 			telConn.onSyncPoint()
+			stmts.syncPoint()
 		}
 
 		// Track query start time for stats
