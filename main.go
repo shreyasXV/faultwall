@@ -87,7 +87,8 @@ func main() {
 	proxyModeFlag := ""
 	tlsCert := os.Getenv("TLS_CERT_FILE")
 	tlsKey := os.Getenv("TLS_KEY_FILE")
-	upstreamTLS := os.Getenv("UPSTREAM_TLS") == "true"
+	// UPSTREAM_TLS_CA (a PEM bundle, e.g. the RDS global bundle) implies upstream TLS.
+	upstreamTLS := os.Getenv("UPSTREAM_TLS") == "true" || os.Getenv("UPSTREAM_TLS_CA") != ""
 	upstreamTLSSkipVerify := os.Getenv("UPSTREAM_TLS_SKIP_VERIFY") == "true"
 	for i, arg := range os.Args[1:] {
 		switch arg {

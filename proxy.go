@@ -2,12 +2,14 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -74,6 +76,20 @@ func dialUpstream(upstreamAddr string, tlsConfig *tls.Config) (net.Conn, error) 
 	}
 }
 
+// loadCABundle reads a PEM file of CA certificates (e.g. the AWS RDS global
+// bundle) for verifying the upstream Postgres server.
+func loadCABundle(path string) (*x509.CertPool, error) {
+	pem, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("%s contains no PEM certificates", path)
+	}
+	return pool, nil
+}
+
 func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey string, upstreamTLS, upstreamTLSSkipVerify bool) {
 	var tlsConfig *tls.Config
 	if tlsCert != "" && tlsKey != "" {
@@ -101,6 +117,14 @@ func runProxy(listenAddr, upstreamAddr string, pe *PolicyEngine, tlsCert, tlsKey
 			ServerName:         host,
 			InsecureSkipVerify: upstreamTLSSkipVerify,
 			MinVersion:         tls.VersionTLS12,
+		}
+		if caPath := os.Getenv("UPSTREAM_TLS_CA"); caPath != "" {
+			pool, err := loadCABundle(caPath)
+			if err != nil {
+				log.Fatalf("Proxy: UPSTREAM_TLS_CA: %v", err)
+			}
+			upstreamTLSConfig.RootCAs = pool
+			log.Printf("🔒 Upstream TLS verifies against CA bundle %s", caPath)
 		}
 		if upstreamTLSSkipVerify {
 			log.Printf("🔒 Upstream TLS enabled (skip verify — NOT for production)")

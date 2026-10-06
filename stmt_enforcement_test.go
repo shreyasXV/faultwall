@@ -1,7 +1,11 @@
 package main
 
 import (
+	"encoding/pem"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -289,4 +293,30 @@ func TestRevokedKeySessionEndsWhenAgentRecreated(t *testing.T) {
 	if n := r.KillRevoked(ks); n != 1 || killed["old"] == "" || killed["new"] != "" {
 		t.Fatalf("n=%d killed=%v", n, killed)
 	}
+}
+
+func TestLoadCABundle(t *testing.T) {
+	dir := t.TempDir()
+	bad := dir + "/bad.pem"
+	_ = os.WriteFile(bad, []byte("not a cert"), 0o600)
+	if _, err := loadCABundle(bad); err == nil {
+		t.Fatal("non-PEM bundle must be rejected")
+	}
+	if _, err := loadCABundle(dir + "/missing.pem"); err == nil {
+		t.Fatal("missing file must be rejected")
+	}
+	// The system roots on macOS/Linux test hosts aren't a file; use a test cert.
+	cert := httptestCertPEM(t)
+	good := dir + "/good.pem"
+	_ = os.WriteFile(good, cert, 0o600)
+	if pool, err := loadCABundle(good); err != nil || pool == nil {
+		t.Fatalf("valid bundle: %v", err)
+	}
+}
+
+func httptestCertPEM(t *testing.T) []byte {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
 }

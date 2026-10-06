@@ -103,7 +103,7 @@ FaultWall sits between your agent and PostgreSQL as an inline L7 proxy. Every SQ
 - Parses SQL using the real PostgreSQL C parser (`pg_query_go`) — deterministic, no LLM
 - Sub-1ms latency overhead per query
 - Works with any Postgres client: psql, psycopg2, pgx, SQLAlchemy, JDBC
-- Fail-open on internal errors (won't break your app)
+- Fail-closed on internal errors: if a policy check fails, that query is refused and the session stays usable
 
 ```bash
 ./faultwall --proxy --listen :5433 --upstream localhost:5432 --policies ./policies.yaml
@@ -630,7 +630,12 @@ Delivery: events are batched (200 per batch, every 2s) on a background goroutine
 
 | Env Var | Default | Description |
 |---------|---------|-------------|
-| `POLICY_ENFORCEMENT` | `monitor` | `enforce` (block) or `monitor` (log only) |
+| `POLICY_ENFORCEMENT` | `enforce` | `enforce` (block) or `monitor` (log only). Unknown values fall back to `enforce`. |
+| `UPSTREAM_TLS` | `false` | `true` = TLS to Postgres (SSLRequest), verified against system roots |
+| `UPSTREAM_TLS_CA` | — | PEM CA bundle to verify Postgres with (e.g. the AWS RDS global bundle). Implies `UPSTREAM_TLS=true` |
+| `UPSTREAM_TLS_SKIP_VERIFY` | `false` | Encrypt without verifying the server. Testing only |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | — | Serve TLS to agents (also `--tls-cert` / `--tls-key`) |
+| `FW_UPSTREAM_DATABASE` | database in `DATABASE_URL` | The one database key-authenticated agents may open. `*` allows any |
 
 ### Monitor Mode (Sidecar)
 
@@ -720,9 +725,9 @@ Then set the agent's **Database role** to `fw_ro_support_agent` on the Agents pa
 
 - **DB-port isolation is REQUIRED.** FaultWall is a proxy. If agents can reach the upstream Postgres port directly (bypassing the proxy), every SQL-level rule in this repo is void and PII is exposed. Network policy / security groups / firewall rules MUST allow only the FaultWall proxy to reach the upstream DB port. At startup the proxy runs a best-effort TCP-dial probe (F9) and logs a warning describing what it observed; this is a topology hint, not proof of isolation. Disable with `FW_DB_ISOLATION_CHECK=false` if you've already verified isolation externally.
 - **Identity spoofing:** `application_name` is fully spoofable. Set `auth_token: <secret>` per agent in `policies.yaml` and have the agent send `agent:<id>:mission:<m>:token:<secret>`. To make tokenless agents fail-closed at the proxy, set `FW_REQUIRE_AUTH_TOKEN=true`. JWT-based identity attestation is on the roadmap.
-- **SSL/TLS:** Proxy mode currently denies SSL negotiation (client retries plaintext). For production with remote databases requiring TLS, use a TLS-terminating proxy in front of FaultWall.
+- **SSL/TLS:** To Postgres, set `UPSTREAM_TLS_CA=/path/to/global-bundle.pem` (RDS/Aurora/Cloud SQL) for verified TLS. To agents, set `TLS_CERT_FILE`/`TLS_KEY_FILE`; without them, agent connections are plaintext, so keep agents and the proxy on a private network.
 - **Approvals hold locks taken earlier in the txn:** with `action: hold` (see [docs/APPROVALS.md](docs/APPROVALS.md)), a held statement has not reached Postgres, but locks that earlier statements in the same transaction took stay held until the decision. Keep hold timeouts short; the approver sees `in_txn` and the txn age.
-- **Fail-open:** If FaultWall's policy engine crashes, the query is forwarded (fail-open for availability). Configurable fail-closed mode is planned.
+- **Fail-closed:** If a policy check fails (e.g. a parser panic), the query is refused. If the control plane is unreachable: a held write keeps waiting and is denied at its timeout (default 120s); the proxy keeps enforcing the last policy it synced, with no staleness limit, so a key revoked during the outage stays usable on that proxy until the next successful sync; on a first start with no cached policy, key-authenticated agents are refused.
 
 ---
 
