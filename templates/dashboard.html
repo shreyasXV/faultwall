@@ -1911,7 +1911,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Only the mode cell left (already shown in the top bar): drop the strip.
     const bar = document.getElementById('proxy-overview-bar');
     if (bar && [...bar.querySelectorAll('.kpi-cell')].filter(c => c.style.display !== 'none').length <= 1) bar.style.display = 'none';
-  }, 4000);
+  }, 1500);
   loadPausedAgents();
   refresh();
   refreshAlerts();
